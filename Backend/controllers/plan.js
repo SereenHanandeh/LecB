@@ -759,7 +759,6 @@ dateFrom,
 dateTo,
 } = req.body;
 
-```
 if (
   !name ||
   !excelBatchId ||
@@ -803,7 +802,7 @@ return res.status(201).json({
     "Plan created successfully",
   data: plan,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -823,7 +822,6 @@ try {
 const { planId } =
 req.params;
 
-```
 const {
   supervisorIds,
 } = req.body;
@@ -880,7 +878,7 @@ return res.json({
       uniqueIds,
   },
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -903,7 +901,6 @@ try {
 const { planId } =
 req.params;
 
-```
 const {
   supervisors,
 } = req.body;
@@ -975,7 +972,7 @@ return res.json({
       normalized,
   },
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -998,7 +995,7 @@ try {
 const { planId } =
 req.params;
 
-```
+
 const items = req.body;
 
 if (!planId) {
@@ -1027,7 +1024,6 @@ return res.json({
     "Preassignments saved successfully",
   data: null,
 });
-```
 
 } catch (err) {
 return handleError(
@@ -1050,7 +1046,6 @@ try {
 const { planId } =
 req.params;
 
-```
 const items = req.body;
 
 if (!planId) {
@@ -1079,7 +1074,7 @@ return res.json({
     "Affinities saved successfully",
   data: null,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1102,7 +1097,6 @@ try {
 const { planId } =
 req.params;
 
-```
 const {
   variant = 1,
 } = req.body || {};
@@ -1156,7 +1150,7 @@ return res.json({
   downloadUrl:
     `/exports/plan_${planId}.xlsx`,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1179,7 +1173,6 @@ try {
 const { planId } =
 req.params;
 
-```
 if (!planId) {
   return res.status(400).json({
     success: false,
@@ -1220,7 +1213,7 @@ return res.json({
     "Plan fetched successfully",
   data: plan,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1243,14 +1236,14 @@ try {
 const plans =
 await getAllPlans();
 
-```
+
 return res.json({
   success: true,
   message:
     "Plans fetched successfully",
   data: plans,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1273,7 +1266,7 @@ try {
 const { planId } =
 req.params;
 
-```
+
 const {
   sessionGroupId,
   supervisorId,
@@ -1303,7 +1296,7 @@ return res.json({
     "Assignment locked successfully",
   data: null,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1328,7 +1321,7 @@ planId,
 sessionGroupId,
 } = req.params;
 
-```
+
 if (
   !planId ||
   !sessionGroupId
@@ -1351,7 +1344,7 @@ return res.json({
     "Assignment unlocked successfully",
   data: null,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1374,7 +1367,7 @@ try {
 const { planId } =
 req.params;
 
-```
+
 const {
   fromSupervisorId,
   toSupervisorId,
@@ -1414,7 +1407,7 @@ return res.json({
     "Assignment moved successfully",
   data: null,
 });
-```
+
 
 } catch (err) {
 return handleError(
@@ -1437,7 +1430,7 @@ try {
 const { planId } =
 req.params;
 
-```
+
 if (!planId) {
   return res.status(400).json({
     success: false,
@@ -1455,7 +1448,6 @@ return res.json({
     "Plan stats fetched successfully",
   data: stats,
 });
-```
 
 } catch (err) {
 return handleError(
