@@ -689,15 +689,15 @@ async function getPlanContext(planId) {
   );
 
   return {
-    plan,
-    groups: sessionsResult.rows,
-    supervisors: supervisorsResult.rows,
-    dutyPool: dutyPoolResult.rows,
-    periodQuotas: periodQuotasResult.rows,
-    pre: preResult.rows,
-    locks: locksResult.rows,
-    aff: affResult.rows,
-  };
+  plan,
+  groups: sessionsResult.rows,
+  supervisors: supervisorsResult.rows,
+  dutyPool: dutyPoolResult.rows,
+  periodQuotas: periodQuotasResult.rows,
+  pre: preResult.rows,
+  locks: locksResult.rows,
+  affinities: affResult.rows,
+};
 }
 
 // =====================================================
@@ -890,6 +890,37 @@ async function moveAssignmentSvc(
   if (!Number.isInteger(toId)) {
     throw new Error("Invalid toSupervisorId");
   }
+
+  // =====================================================
+// 🔗 التحقق من Affinity
+// =====================================================
+
+const affinityResult = await pool.query(
+  `
+  SELECT
+    a.supervisor_id,
+    a.name,
+    a.professor_id
+  FROM affinities a
+  JOIN session_groups sg
+    ON sg.professor_id = a.professor_id
+  WHERE a.plan_id = $1
+    AND sg.id = $2
+  LIMIT 1
+  `,
+  [planId, groupId]
+);
+
+if (affinityResult.rowCount > 0) {
+  const affinitySupervisorId =
+    Number(affinityResult.rows[0].supervisor_id);
+
+  if (affinitySupervisorId !== toId) {
+    throw new Error(
+      `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`
+    );
+  }
+}
 
   // احذف أي assignment موجود لهذا الـ Session Group
   await pool.query(
