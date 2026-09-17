@@ -334,9 +334,9 @@ async function savePreassignments(
 async function saveAffinities(planId, items = []) {
   console.log("========================================");
   console.log("🔗 SAVING PROFESSOR AFFINITIES");
+  console.log("📌 Plan ID:", planId);
+  console.log("📌 Received items:", items);
   console.log("========================================");
-  console.log("Plan ID:", planId);
-  console.log("Received items:", items);
 
   await pool.query(
     `
@@ -355,21 +355,21 @@ async function saveAffinities(planId, items = []) {
 
   for (const item of items) {
     try {
-      // -------------------------------------------------
+      // =====================================================
       // Professor ID
-      // -------------------------------------------------
+      // =====================================================
 
       let professorId = Number(
         item.professorId ??
         item.professor_id ??
-        null
+        NaN
       );
 
-      // -------------------------------------------------
+      // =====================================================
       // Professor Name
-      // -------------------------------------------------
+      // =====================================================
 
-      const professorName = String(
+      let professorName = String(
         item.professorName ??
         item.professor_name ??
         item.name ??
@@ -378,23 +378,25 @@ async function saveAffinities(planId, items = []) {
         .trim()
         .replace(/\s+/g, " ");
 
-      // -------------------------------------------------
+      // =====================================================
       // Supervisor ID
-      // -------------------------------------------------
+      // =====================================================
 
       const supervisorId = Number(
         item.supervisorId ??
         item.supervisor_id ??
-        null
+        NaN
       );
 
-      // -------------------------------------------------
+      // =====================================================
       // Validate Supervisor
-      // -------------------------------------------------
+      // =====================================================
 
       if (!Number.isInteger(supervisorId)) {
         console.warn(
-          `⚠️ Invalid supervisor ID in affinity: ${supervisorId}`
+          "⚠️ Invalid supervisor ID:",
+          supervisorId,
+          item
         );
         continue;
       }
@@ -416,10 +418,10 @@ async function saveAffinities(planId, items = []) {
         continue;
       }
 
-      // -------------------------------------------------
-      // إذا ما وصل Professor ID
-      // نحاول نجيبه من الاسم
-      // -------------------------------------------------
+      // =====================================================
+      // إذا لم يصل Professor ID
+      // نبحث عنه بالاسم
+      // =====================================================
 
       if (!Number.isInteger(professorId)) {
         if (!professorName) {
@@ -434,7 +436,8 @@ async function saveAffinities(planId, items = []) {
           `
           SELECT id, name
           FROM professors
-          WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+          WHERE LOWER(TRIM(name)) =
+                LOWER(TRIM($1))
           ORDER BY id
           LIMIT 1
           `,
@@ -448,12 +451,17 @@ async function saveAffinities(planId, items = []) {
           continue;
         }
 
-        professorId = Number(professorByName.rows[0].id);
+        professorId = Number(
+          professorByName.rows[0].id
+        );
+
+        professorName =
+          professorByName.rows[0].name;
       }
 
-      // -------------------------------------------------
-      // التأكد من الأستاذ
-      // -------------------------------------------------
+      // =====================================================
+      // تأكيد أن الأستاذ موجود
+      // =====================================================
 
       const professorCheck = await pool.query(
         `
@@ -471,21 +479,17 @@ async function saveAffinities(planId, items = []) {
         continue;
       }
 
-      const professor = professorCheck.rows[0];
+      const professor =
+        professorCheck.rows[0];
 
-      // -------------------------------------------------
-      // نحفظ الاسم الرسمي من قاعدة البيانات
-      // -------------------------------------------------
+      const canonicalProfessorName =
+        String(professor.name || professorName)
+          .trim()
+          .replace(/\s+/g, " ");
 
-      const canonicalProfessorName = String(
-        professor.name || professorName
-      )
-        .trim()
-        .replace(/\s+/g, " ");
-
-      // -------------------------------------------------
-      // Save
-      // -------------------------------------------------
+      // =====================================================
+      // حفظ Affinity
+      // =====================================================
 
       const insertResult = await pool.query(
         `
@@ -508,10 +512,20 @@ async function saveAffinities(planId, items = []) {
         ]
       );
 
-      saved.push(insertResult.rows[0]);
+      const savedAffinity =
+        insertResult.rows[0];
+
+      saved.push(savedAffinity);
 
       console.log(
-        `✅ Affinity saved: Professor "${canonicalProfessorName}" (${professorId}) -> Supervisor ${supervisorId}`
+        "✅ Affinity saved:",
+        {
+          planId,
+          professorId,
+          professorName: canonicalProfessorName,
+          supervisorId,
+          crn: item.crn ?? null,
+        }
       );
     } catch (error) {
       console.error(
@@ -524,7 +538,7 @@ async function saveAffinities(planId, items = []) {
 
   console.log("========================================");
   console.log(
-    `🔗 Affinities saved successfully: ${saved.length}/${items.length}`
+    `🔗 Affinities saved: ${saved.length}/${items.length}`
   );
   console.log("========================================");
 
@@ -673,20 +687,26 @@ async function getPlanContext(planId) {
   // ---------------------------------------------------
 
   const affResult = await pool.query(
-    `
-    SELECT
-      a.*,
-      p.name AS professor_name,
-      s.name AS supervisor_name
-    FROM affinities a
-    LEFT JOIN professors p
-      ON p.id = a.professor_id
-    LEFT JOIN supervisors s
-      ON s.id = a.supervisor_id
-    WHERE a.plan_id = $1
-    `,
-    [planId]
-  );
+  `
+  SELECT
+    a.id,
+    a.plan_id,
+    a.professor_id,
+    a.name,
+    a.crn,
+    a.supervisor_id,
+    p.name AS professor_name,
+    s.name AS supervisor_name
+  FROM affinities a
+  LEFT JOIN professors p
+    ON p.id = a.professor_id
+  LEFT JOIN supervisors s
+    ON s.id = a.supervisor_id
+  WHERE a.plan_id = $1
+  ORDER BY a.professor_id, a.id
+  `,
+  [planId]
+);
 
   return {
   plan,
@@ -697,6 +717,8 @@ async function getPlanContext(planId) {
   pre: preResult.rows,
   locks: locksResult.rows,
   affinities: affResult.rows,
+    aff: affResult.rows,
+
 };
 }
 

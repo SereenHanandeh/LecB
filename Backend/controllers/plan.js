@@ -1,4 +1,3 @@
-
 const {
   createPlanRow,
   saveDutyPool,
@@ -13,23 +12,14 @@ const {
   getAllPlans,
 } = require("../services/plan.js");
 
-const {
-  generatePlan,
-} = require("../services/excel.js");
+const { generatePlan } = require("../services/excel.js");
 
 // =====================================================
 // Error Handler
 // =====================================================
 
-function handleError(
-  res,
-  err,
-  message = "Internal server error"
-) {
-  console.error(
-    `❌ ${message}:`,
-    err
-  );
+function handleError(res, err, message = "Internal server error") {
+  console.error(`❌ ${message}:`, err);
 
   return res.status(500).json({
     success: false,
@@ -43,45 +33,29 @@ function handleError(
 
 async function createPlan(req, res) {
   try {
-    const {
-      name,
-      excelBatchId,
-      dateFrom,
-      dateTo,
-    } = req.body;
+    const { name, excelBatchId, dateFrom, dateTo } = req.body;
 
-    if (
-      !name ||
-      !excelBatchId ||
-      !dateFrom ||
-      !dateTo
-    ) {
+    if (!name || !excelBatchId || !dateFrom || !dateTo) {
       return res.status(400).json({
         success: false,
-        error:
-          "name, excelBatchId, dateFrom and dateTo are required",
+        error: "name, excelBatchId, dateFrom and dateTo are required",
       });
     }
 
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
 
-    if (
-      Number.isNaN(fromDate.getTime()) ||
-      Number.isNaN(toDate.getTime())
-    ) {
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
       return res.status(400).json({
         success: false,
-        error:
-          "Invalid dateFrom or dateTo",
+        error: "Invalid dateFrom or dateTo",
       });
     }
 
     if (fromDate > toDate) {
       return res.status(400).json({
         success: false,
-        error:
-          "dateFrom cannot be after dateTo",
+        error: "dateFrom cannot be after dateTo",
       });
     }
 
@@ -92,23 +66,15 @@ async function createPlan(req, res) {
       dateTo,
     });
 
-    console.log(
-      "✅ Created plan:",
-      plan
-    );
+    console.log("✅ Created plan:", plan);
 
     return res.status(201).json({
       success: true,
-      message:
-        "Plan created successfully",
+      message: "Plan created successfully",
       data: plan,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error creating plan"
-    );
+    return handleError(res, err, "Error creating plan");
   }
 }
 
@@ -131,9 +97,7 @@ async function setDutyPool(req, res) {
     console.log("📌 supervisorIds received:", supervisorIds);
     console.log(
       "📌 supervisorIds type:",
-      Array.isArray(supervisorIds)
-        ? "array"
-        : typeof supervisorIds
+      Array.isArray(supervisorIds) ? "array" : typeof supervisorIds,
     );
     console.log("========================================");
 
@@ -162,69 +126,43 @@ async function setDutyPool(req, res) {
         supervisorIds
           .map((item) => {
             // إذا كان ID مباشر
-            if (
-              typeof item === "number" ||
-              typeof item === "string"
-            ) {
+            if (typeof item === "number" || typeof item === "string") {
               return Number(item);
             }
 
             // إذا كان Object
-            if (
-              item &&
-              typeof item === "object"
-            ) {
-              return Number(
-                item.id ??
-                item.supervisorId ??
-                item.supervisor_id
-              );
+            if (item && typeof item === "object") {
+              return Number(item.id ?? item.supervisorId ?? item.supervisor_id);
             }
 
             return NaN;
           })
-          .filter((id) =>
-            Number.isInteger(id)
-          )
-      )
+          .filter((id) => Number.isInteger(id)),
+      ),
     );
 
-    console.log(
-      "📌 normalized supervisor IDs:",
-      uniqueIds
-    );
+    console.log("📌 normalized supervisor IDs:", uniqueIds);
 
     if (!uniqueIds.length) {
       return res.status(400).json({
         success: false,
-        error:
-          "At least one valid supervisor is required",
+        error: "At least one valid supervisor is required",
       });
     }
 
-    await saveDutyPool(
-      planId,
-      uniqueIds
-    );
+    await saveDutyPool(planId, uniqueIds);
 
-    console.log(
-      "✅ Duty pool saved successfully"
-    );
+    console.log("✅ Duty pool saved successfully");
 
     return res.json({
       success: true,
-      message:
-        "Duty pool saved successfully",
+      message: "Duty pool saved successfully",
       data: {
         supervisorIds: uniqueIds,
       },
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error setting duty pool"
-    );
+    return handleError(res, err, "Error setting duty pool");
   }
 }
 
@@ -232,10 +170,7 @@ async function setDutyPool(req, res) {
 // Set Period Quotas
 // =====================================================
 
-async function setPeriodQuotas(
-  req,
-  res
-) {
+async function setPeriodQuotas(req, res) {
   try {
     const { planId } = req.params;
     const { supervisors } = req.body;
@@ -255,65 +190,42 @@ async function setPeriodQuotas(
     ) {
       return res.status(400).json({
         success: false,
-        error:
-          "supervisors must be an object",
+        error: "supervisors must be an object",
       });
     }
 
     const normalized = {};
 
-    for (
-      const [
-        supervisorId,
-        targetPeriods,
-      ] of Object.entries(supervisors)
-    ) {
-      const sid = Number(
-        supervisorId
-      );
+    for (const [supervisorId, targetPeriods] of Object.entries(supervisors)) {
+      const sid = Number(supervisorId);
 
-      const target = Number(
-        targetPeriods
-      );
+      const target = Number(targetPeriods);
 
       if (!Number.isInteger(sid)) {
         continue;
       }
 
-      if (
-        !Number.isInteger(target) ||
-        target <= 0
-      ) {
+      if (!Number.isInteger(target) || target <= 0) {
         return res.status(400).json({
           success: false,
-          error:
-            `Invalid period quota for supervisor ${sid}`,
+          error: `Invalid period quota for supervisor ${sid}`,
         });
       }
 
       normalized[sid] = target;
     }
 
-    await savePeriodQuotas(
-      planId,
-      normalized
-    );
+    await savePeriodQuotas(planId, normalized);
 
     return res.json({
       success: true,
-      message:
-        "Period quotas saved successfully",
+      message: "Period quotas saved successfully",
       data: {
-        supervisors:
-          normalized,
+        supervisors: normalized,
       },
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error saving period quotas"
-    );
+    return handleError(res, err, "Error saving period quotas");
   }
 }
 
@@ -321,10 +233,7 @@ async function setPeriodQuotas(
 // Add Preassignments
 // =====================================================
 
-async function addPreassignments(
-  req,
-  res
-) {
+async function addPreassignments(req, res) {
   try {
     const { planId } = req.params;
     const items = req.body;
@@ -340,28 +249,19 @@ async function addPreassignments(
     if (!Array.isArray(items)) {
       return res.status(400).json({
         success: false,
-        error:
-          "Body must be an array",
+        error: "Body must be an array",
       });
     }
 
-    await savePreassignments(
-      planId,
-      items
-    );
+    await savePreassignments(planId, items);
 
     return res.json({
       success: true,
-      message:
-        "Preassignments saved successfully",
+      message: "Preassignments saved successfully",
       data: null,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error saving preassignments"
-    );
+    return handleError(res, err, "Error saving preassignments");
   }
 }
 
@@ -369,10 +269,7 @@ async function addPreassignments(
 // Add Affinities
 // =====================================================
 
-async function addAffinities(
-  req,
-  res
-) {
+async function addAffinities(req, res) {
   try {
     const { planId } = req.params;
     const items = req.body;
@@ -388,28 +285,19 @@ async function addAffinities(
     if (!Array.isArray(items)) {
       return res.status(400).json({
         success: false,
-        error:
-          "Body must be an array",
+        error: "Body must be an array",
       });
     }
 
-    await saveAffinities(
-      planId,
-      items
-    );
+    const saved = await saveAffinities(planId, items);
 
     return res.json({
       success: true,
-      message:
-        "Affinities saved successfully",
-      data: null,
+      message: "Affinities saved successfully",
+      data: saved,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error saving affinities"
-    );
+    return handleError(res, err, "Error saving affinities");
   }
 }
 
@@ -417,16 +305,11 @@ async function addAffinities(
 // Generate Plan
 // =====================================================
 
-async function generate(
-  req,
-  res
-) {
+async function generate(req, res) {
   try {
     const { planId } = req.params;
 
-    const {
-      variant = 1,
-    } = req.body || {};
+    const { variant = 1 } = req.body || {};
 
     // planId هو UUID
     if (!planId) {
@@ -436,57 +319,33 @@ async function generate(
       });
     }
 
-    const parsedVariant =
-      Number(variant);
+    const parsedVariant = Number(variant);
 
-    if (
-      !Number.isInteger(
-        parsedVariant
-      ) ||
-      parsedVariant < 1
-    ) {
+    if (!Number.isInteger(parsedVariant) || parsedVariant < 1) {
       return res.status(400).json({
         success: false,
-        error:
-          "variant must be a positive integer",
+        error: "variant must be a positive integer",
       });
     }
 
-    console.log(
-      `🚀 Generating plan ${planId}, variant ${parsedVariant}`
-    );
+    console.log(`🚀 Generating plan ${planId}, variant ${parsedVariant}`);
 
-    const generated =
-      await generatePlan(
-        planId,
-        parsedVariant
-      );
+    const generated = await generatePlan(planId, parsedVariant);
 
-    console.log(
-      "✅ Generated plan:",
-      generated
-    );
+    console.log("✅ Generated plan:", generated);
 
     return res.json({
       success: true,
-      message:
-        "Plan generated successfully",
+      message: "Plan generated successfully",
 
-      data:
-        generated.result || [],
+      data: generated.result || [],
 
-      stats:
-        generated.stats || null,
+      stats: generated.stats || null,
 
-      downloadUrl:
-        `/exports/plan_${planId}.xlsx`,
+      downloadUrl: `/exports/plan_${planId}.xlsx`,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error generating plan"
-    );
+    return handleError(res, err, "Error generating plan");
   }
 }
 
@@ -494,10 +353,7 @@ async function generate(
 // Get One Plan
 // =====================================================
 
-async function getPlan(
-  req,
-  res
-) {
+async function getPlan(req, res) {
   try {
     const { planId } = req.params;
 
@@ -509,34 +365,24 @@ async function getPlan(
       });
     }
 
-    console.log(
-      "🔎 Fetching plan:",
-      planId
-    );
+    console.log("🔎 Fetching plan:", planId);
 
-    const plan =
-      await fetchPlan(planId);
+    const plan = await fetchPlan(planId);
 
     if (!plan) {
       return res.status(404).json({
         success: false,
-        error:
-          "Plan not found",
+        error: "Plan not found",
       });
     }
 
     return res.json({
       success: true,
-      message:
-        "Plan fetched successfully",
+      message: "Plan fetched successfully",
       data: plan,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error fetching plan"
-    );
+    return handleError(res, err, "Error fetching plan");
   }
 }
 
@@ -544,26 +390,17 @@ async function getPlan(
 // Get All Plans
 // =====================================================
 
-async function getPlans(
-  req,
-  res
-) {
+async function getPlans(req, res) {
   try {
-    const plans =
-      await getAllPlans();
+    const plans = await getAllPlans();
 
     return res.json({
       success: true,
-      message:
-        "Plans fetched successfully",
+      message: "Plans fetched successfully",
       data: plans,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error fetching plans"
-    );
+    return handleError(res, err, "Error fetching plans");
   }
 }
 
@@ -571,71 +408,43 @@ async function getPlans(
 // Lock Assignment
 // =====================================================
 
-async function lockAssignment(
-  req,
-  res
-) {
+async function lockAssignment(req, res) {
   try {
-    const { planId } =
-      req.params;
+    const { planId } = req.params;
 
-    const {
-      sessionGroupId,
-      supervisorId,
-    } = req.body;
+    const { sessionGroupId, supervisorId } = req.body;
 
     // planId هو UUID
-    if (
-      !planId ||
-      sessionGroupId == null ||
-      supervisorId == null
-    ) {
+    if (!planId || sessionGroupId == null || supervisorId == null) {
       return res.status(400).json({
         success: false,
-        error:
-          "planId, sessionGroupId and supervisorId are required",
+        error: "planId, sessionGroupId and supervisorId are required",
       });
     }
 
-    const parsedSessionGroupId =
-      Number(sessionGroupId);
+    const parsedSessionGroupId = Number(sessionGroupId);
 
-    const parsedSupervisorId =
-      Number(supervisorId);
+    const parsedSupervisorId = Number(supervisorId);
 
     if (
-      !Number.isInteger(
-        parsedSessionGroupId
-      ) ||
-      !Number.isInteger(
-        parsedSupervisorId
-      )
+      !Number.isInteger(parsedSessionGroupId) ||
+      !Number.isInteger(parsedSupervisorId)
     ) {
       return res.status(400).json({
         success: false,
-        error:
-          "sessionGroupId and supervisorId must be valid integers",
+        error: "sessionGroupId and supervisorId must be valid integers",
       });
     }
 
-    await lockRow(
-      planId,
-      parsedSessionGroupId,
-      parsedSupervisorId
-    );
+    await lockRow(planId, parsedSessionGroupId, parsedSupervisorId);
 
     return res.json({
       success: true,
-      message:
-        "Assignment locked successfully",
+      message: "Assignment locked successfully",
       data: null,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error locking assignment"
-    );
+    return handleError(res, err, "Error locking assignment");
   }
 }
 
@@ -643,60 +452,36 @@ async function lockAssignment(
 // Unlock Assignment
 // =====================================================
 
-async function unlockAssignment(
-  req,
-  res
-) {
+async function unlockAssignment(req, res) {
   try {
-    const {
-      planId,
-      sessionGroupId,
-    } = req.params;
+    const { planId, sessionGroupId } = req.params;
 
     // planId هو UUID
-    if (
-      !planId ||
-      !sessionGroupId
-    ) {
+    if (!planId || !sessionGroupId) {
       return res.status(400).json({
         success: false,
-        error:
-          "planId and sessionGroupId are required",
+        error: "planId and sessionGroupId are required",
       });
     }
 
-    const parsedSessionGroupId =
-      Number(sessionGroupId);
+    const parsedSessionGroupId = Number(sessionGroupId);
 
-    if (
-      !Number.isInteger(
-        parsedSessionGroupId
-      )
-    ) {
+    if (!Number.isInteger(parsedSessionGroupId)) {
       return res.status(400).json({
         success: false,
-        error:
-          "sessionGroupId must be a valid integer",
+        error: "sessionGroupId must be a valid integer",
       });
     }
 
-    await unlockRow(
-      planId,
-      parsedSessionGroupId
-    );
+    await unlockRow(planId, parsedSessionGroupId);
 
     return res.json({
       success: true,
-      message:
-        "Assignment unlocked successfully",
+      message: "Assignment unlocked successfully",
       data: null,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error unlocking assignment"
-    );
+    return handleError(res, err, "Error unlocking assignment");
   }
 }
 
@@ -704,19 +489,11 @@ async function unlockAssignment(
 // Move Assignment
 // =====================================================
 
-async function moveAssignment(
-  req,
-  res
-) {
+async function moveAssignment(req, res) {
   try {
-    const { planId } =
-      req.params;
+    const { planId } = req.params;
 
-    const {
-      fromSupervisorId,
-      toSupervisorId,
-      sessionGroupId,
-    } = req.body;
+    const { fromSupervisorId, toSupervisorId, sessionGroupId } = req.body;
 
     // planId هو UUID
     if (
@@ -732,59 +509,38 @@ async function moveAssignment(
       });
     }
 
-    const parsedFromSupervisorId =
-      Number(fromSupervisorId);
+    const parsedFromSupervisorId = Number(fromSupervisorId);
 
-    const parsedToSupervisorId =
-      Number(toSupervisorId);
+    const parsedToSupervisorId = Number(toSupervisorId);
 
-    const parsedSessionGroupId =
-      Number(sessionGroupId);
+    const parsedSessionGroupId = Number(sessionGroupId);
 
     if (
-      !Number.isInteger(
-        parsedFromSupervisorId
-      ) ||
-      !Number.isInteger(
-        parsedToSupervisorId
-      ) ||
-      !Number.isInteger(
-        parsedSessionGroupId
-      )
+      !Number.isInteger(parsedFromSupervisorId) ||
+      !Number.isInteger(parsedToSupervisorId) ||
+      !Number.isInteger(parsedSessionGroupId)
     ) {
       return res.status(400).json({
         success: false,
-        error:
-          "Supervisor IDs and sessionGroupId must be valid integers",
+        error: "Supervisor IDs and sessionGroupId must be valid integers",
       });
     }
 
-    await moveAssignmentSvc(
-      planId,
-      {
-        fromSupervisorId:
-          parsedFromSupervisorId,
+    await moveAssignmentSvc(planId, {
+      fromSupervisorId: parsedFromSupervisorId,
 
-        toSupervisorId:
-          parsedToSupervisorId,
+      toSupervisorId: parsedToSupervisorId,
 
-        sessionGroupId:
-          parsedSessionGroupId,
-      }
-    );
+      sessionGroupId: parsedSessionGroupId,
+    });
 
     return res.json({
       success: true,
-      message:
-        "Assignment moved successfully",
+      message: "Assignment moved successfully",
       data: null,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error moving assignment"
-    );
+    return handleError(res, err, "Error moving assignment");
   }
 }
 
@@ -792,38 +548,27 @@ async function moveAssignment(
 // Get Stats
 // =====================================================
 
-async function getStats(
-  req,
-  res
-) {
+async function getStats(req, res) {
   try {
-    const { planId } =
-      req.params;
+    const { planId } = req.params;
 
     // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
-        error:
-          "planId is required",
+        error: "planId is required",
       });
     }
 
-    const stats =
-      await planStats(planId);
+    const stats = await planStats(planId);
 
     return res.json({
       success: true,
-      message:
-        "Plan stats fetched successfully",
+      message: "Plan stats fetched successfully",
       data: stats,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error fetching stats"
-    );
+    return handleError(res, err, "Error fetching stats");
   }
 }
 
