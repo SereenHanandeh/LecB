@@ -448,37 +448,20 @@ async function generate(
 // Get Plan
 // =====================================================
 
-async function getPlan(
-  req,
-  res
-) {
+async function getPlans(req, res) {
   try {
-    const { planId } =
-      req.params;
-
-    if (!planId) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "planId is required",
-      });
-    }
-
-    const data =
-      await fetchPlan(planId);
+    const plans = await getAllPlans();
 
     return res.json({
       success: true,
-      message:
-        "Plan fetched successfully",
-      data,
+      message: "Plans fetched successfully",
+      data: plans,
     });
-
   } catch (err) {
     return handleError(
       res,
       err,
-      "Error fetching plan"
+      "Error fetching plans"
     );
   }
 }
@@ -724,5 +707,5 @@ module.exports = {
   moveAssignment,
 
   getStats,
-  getAllPlans,
+  getPlans,
 };

@@ -5,7 +5,7 @@ const Plan = require("../controllers/plan.js");
 const planRouter = express.Router();
 
 
-planRouter.get("/", Plan.getAllPlans);
+planRouter.get("/", Plan.getPlans);
 
 planRouter.post("/", Plan.createPlan);
 
