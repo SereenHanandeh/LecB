@@ -91,13 +91,7 @@ async function getDutyPool(planId) {
 // =====================================================
 
 // حفظ عدد الفترات المستهدف لكل مشرف
-//
-// supervisors example:
-// {
-//   "21": 5,
-//   "22": 5,
-//   "23": 7
-// }
+
 async function savePeriodQuotas(
   planId,
   supervisors = {}
@@ -334,12 +328,16 @@ async function savePreassignments(
 
 // =====================================================
 // Affinities
+// Professor -> Supervisor
 // =====================================================
 
-async function saveAffinities(
-  planId,
-  items = []
-) {
+async function saveAffinities(planId, items = []) {
+  console.log("========================================");
+  console.log("🔗 SAVING PROFESSOR AFFINITIES");
+  console.log("========================================");
+  console.log("Plan ID:", planId);
+  console.log("Received items:", items);
+
   await pool.query(
     `
     DELETE FROM affinities
@@ -348,84 +346,189 @@ async function saveAffinities(
     [planId]
   );
 
-  for (const item of items) {
-    const professorId = Number(
-      item.professorId
-    );
-
-    const supervisorId = Number(
-      item.supervisorId
-    );
-
-    if (!Number.isInteger(professorId)) {
-      console.warn(
-        `⚠️ Invalid professor ID: ${item.professorId}`
-      );
-      continue;
-    }
-
-    if (!Number.isInteger(supervisorId)) {
-      console.warn(
-        `⚠️ Invalid supervisor ID: ${item.supervisorId}`
-      );
-      continue;
-    }
-
-    // التأكد من الأستاذ
-    const professorCheck = await pool.query(
-      `
-      SELECT id
-      FROM professors
-      WHERE id = $1
-      `,
-      [professorId]
-    );
-
-    if (professorCheck.rowCount === 0) {
-      console.warn(
-        `⚠️ Professor ${professorId} does not exist`
-      );
-      continue;
-    }
-
-    // التأكد من المشرف
-    const supervisorCheck = await pool.query(
-      `
-      SELECT id
-      FROM supervisors
-      WHERE id = $1
-        AND active = TRUE
-      `,
-      [supervisorId]
-    );
-
-    if (supervisorCheck.rowCount === 0) {
-      console.warn(
-        `⚠️ Supervisor ${supervisorId} does not exist or inactive`
-      );
-      continue;
-    }
-
-    await pool.query(
-      `
-      INSERT INTO affinities (
-        plan_id,
-        name,
-        professor_id,
-        crn,
-        supervisor_id
-      )
-      VALUES ($1, $2, $3, $4, $5)
-      `,
-      [
-        planId,
-        item.name || null,
-        professorId,
-        item.crn || null,
-        supervisorId,
-      ]
-    );
+  if (!Array.isArray(items) || !items.length) {
+    console.log("ℹ️ No affinities to save.");
+    return [];
   }
+
+  const saved = [];
+
+  for (const item of items) {
+    try {
+      // -------------------------------------------------
+      // Professor ID
+      // -------------------------------------------------
+
+      let professorId = Number(
+        item.professorId ??
+        item.professor_id ??
+        null
+      );
+
+      // -------------------------------------------------
+      // Professor Name
+      // -------------------------------------------------
+
+      const professorName = String(
+        item.professorName ??
+        item.professor_name ??
+        item.name ??
+        ""
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+
+      // -------------------------------------------------
+      // Supervisor ID
+      // -------------------------------------------------
+
+      const supervisorId = Number(
+        item.supervisorId ??
+        item.supervisor_id ??
+        null
+      );
+
+      // -------------------------------------------------
+      // Validate Supervisor
+      // -------------------------------------------------
+
+      if (!Number.isInteger(supervisorId)) {
+        console.warn(
+          `⚠️ Invalid supervisor ID in affinity: ${supervisorId}`
+        );
+        continue;
+      }
+
+      const supervisorCheck = await pool.query(
+        `
+        SELECT id, name
+        FROM supervisors
+        WHERE id = $1
+          AND active = TRUE
+        `,
+        [supervisorId]
+      );
+
+      if (supervisorCheck.rowCount === 0) {
+        console.warn(
+          `⚠️ Supervisor ${supervisorId} does not exist or inactive`
+        );
+        continue;
+      }
+
+      // -------------------------------------------------
+      // إذا ما وصل Professor ID
+      // نحاول نجيبه من الاسم
+      // -------------------------------------------------
+
+      if (!Number.isInteger(professorId)) {
+        if (!professorName) {
+          console.warn(
+            "⚠️ Affinity ignored: no professor ID and no professor name.",
+            item
+          );
+          continue;
+        }
+
+        const professorByName = await pool.query(
+          `
+          SELECT id, name
+          FROM professors
+          WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+          ORDER BY id
+          LIMIT 1
+          `,
+          [professorName]
+        );
+
+        if (professorByName.rowCount === 0) {
+          console.warn(
+            `⚠️ Professor not found by name: "${professorName}"`
+          );
+          continue;
+        }
+
+        professorId = Number(professorByName.rows[0].id);
+      }
+
+      // -------------------------------------------------
+      // التأكد من الأستاذ
+      // -------------------------------------------------
+
+      const professorCheck = await pool.query(
+        `
+        SELECT id, name
+        FROM professors
+        WHERE id = $1
+        `,
+        [professorId]
+      );
+
+      if (professorCheck.rowCount === 0) {
+        console.warn(
+          `⚠️ Professor ${professorId} does not exist`
+        );
+        continue;
+      }
+
+      const professor = professorCheck.rows[0];
+
+      // -------------------------------------------------
+      // نحفظ الاسم الرسمي من قاعدة البيانات
+      // -------------------------------------------------
+
+      const canonicalProfessorName = String(
+        professor.name || professorName
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+
+      // -------------------------------------------------
+      // Save
+      // -------------------------------------------------
+
+      const insertResult = await pool.query(
+        `
+        INSERT INTO affinities (
+          plan_id,
+          name,
+          professor_id,
+          crn,
+          supervisor_id
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+        `,
+        [
+          planId,
+          canonicalProfessorName,
+          professorId,
+          item.crn ?? null,
+          supervisorId,
+        ]
+      );
+
+      saved.push(insertResult.rows[0]);
+
+      console.log(
+        `✅ Affinity saved: Professor "${canonicalProfessorName}" (${professorId}) -> Supervisor ${supervisorId}`
+      );
+    } catch (error) {
+      console.error(
+        "❌ Error saving affinity:",
+        item,
+        error
+      );
+    }
+  }
+
+  console.log("========================================");
+  console.log(
+    `🔗 Affinities saved successfully: ${saved.length}/${items.length}`
+  );
+  console.log("========================================");
+
+  return saved;
 }
 
 // =====================================================
@@ -869,8 +972,43 @@ async function planStats(planId) {
 }
 
 // =====================================================
-// Export
+// جلب جميع الخطط السابقة
 // =====================================================
+
+async function getAllPlans() {
+  const result = await pool.query(`
+    SELECT
+      p.id,
+      p.name,
+      p.excel_batch_id,
+      p.date_from,
+      p.date_to,
+      p.created_at,
+
+      -- عدد المشرفين المختارين للخطة
+      (
+        SELECT COUNT(*)
+        FROM duty_pool dp
+        WHERE dp.plan_window_id = p.id
+      ) AS supervisor_count,
+
+      -- عدد التعيينات الموجودة بالخطة
+      (
+        SELECT COUNT(*)
+        FROM assignments a
+        WHERE a.plan_id = p.id
+      ) AS assignment_count
+
+    FROM plans p
+
+    ORDER BY
+      p.created_at DESC,
+      p.id DESC
+  `);
+
+  return result.rows;
+}
+
 
 module.exports = {
   createPlanRow,
@@ -896,4 +1034,5 @@ module.exports = {
   moveAssignmentSvc,
 
   planStats,
+  getAllPlans,
 };

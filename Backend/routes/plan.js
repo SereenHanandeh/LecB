@@ -4,6 +4,9 @@ const Plan = require("../controllers/plan.js");
 
 const planRouter = express.Router();
 
+
+planRouter.get("/", Plan.getAllPlans);
+
 planRouter.post("/", Plan.createPlan);
 
 planRouter.post(

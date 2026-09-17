@@ -263,8 +263,6 @@ function mapHeader(header) {
 function readWorksheet(worksheet) {
   const rows = [];
 
-  // Excel file has empty rows 1 and 2.
-  // Headers are on row 3.
   const HEADER_ROW_NUMBER = 3;
 
   const headerRow =
@@ -275,7 +273,7 @@ function readWorksheet(worksheet) {
   const headerMap = {};
 
   console.log(
-    `📌 Excel headers (row ${HEADER_ROW_NUMBER}):`,
+    `Excel headers (row ${HEADER_ROW_NUMBER}):`,
     headerRow.values
   );
 
@@ -306,7 +304,7 @@ function readWorksheet(worksheet) {
   );
 
   console.log(
-    "📌 Excel header map:",
+    "Excel header map:",
     headerMap
   );
 
@@ -353,7 +351,7 @@ function readWorksheet(worksheet) {
   );
 
   console.log(
-    `📊 Worksheet data rows read: ${rows.length}`
+    `Worksheet data rows read: ${rows.length}`
   );
 
   return {

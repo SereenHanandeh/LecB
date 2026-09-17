@@ -1,6 +1,5 @@
 const {
   createPlanRow,
-  getPlanContext,
   saveDutyPool,
   savePeriodQuotas,
   savePreassignments,
@@ -10,6 +9,8 @@ const {
   unlockRow,
   moveAssignmentSvc,
   planStats,
+    getAllPlans,
+
 } = require("../services/plan.js");
 
 const {
@@ -680,6 +681,28 @@ async function getStats(
 }
 
 // =====================================================
+// Get All Plans
+// =====================================================
+
+async function getPlans(req, res) {
+  try {
+    const plans = await getAllPlans();
+
+    return res.json({
+      success: true,
+      message: "Plans fetched successfully",
+      data: plans,
+    });
+  } catch (err) {
+    return handleError(
+      res,
+      err,
+      "Error fetching plans"
+    );
+  }
+}
+
+// =====================================================
 // Exports
 // =====================================================
 
@@ -701,4 +724,5 @@ module.exports = {
   moveAssignment,
 
   getStats,
+  getAllPlans,
 };
