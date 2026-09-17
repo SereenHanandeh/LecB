@@ -2,7 +2,10 @@ const { getPlanContext, saveAssignments, getDutyPool } = require("./plan.js");
 
 const seededShuffle = require("../utils/rng.js");
 
-const { getPeriodRank, normalizePeriod } = require("../utils/distribution.js");
+const {
+  getPeriodRank,
+  normalizePeriod,
+} = require("../utils/distribution.js");
 
 const fs = require("fs");
 
@@ -103,10 +106,12 @@ function importExcel(filePath) {
 
       return {
         excel_index: index + 1,
+
         CRN:
           row["CRN"] ??
           row["crn"] ??
           "",
+
         Professor:
           row["Prof"] ??
           row["Professor"] ??
@@ -114,8 +119,11 @@ function importExcel(filePath) {
           row["professor_name"] ??
           row["professor"] ??
           "",
+
         OriginalDate: dateValue,
+
         NormalizedDate: dateISO(dateValue),
+
         Period:
           row["الفترة"] ??
           row["Period"] ??
@@ -544,17 +552,23 @@ function attachGroupToSupervisor(
 
   result.push({
     session_group_id: groupId,
+
     crn: group.crn,
+
     professor:
       group.professor_name ||
       group.professor ||
       "",
+
     professor_id:
       group.professor_id ?? null,
+
     date: dateISO(group.date),
+
     period: normalizePeriod(
       group.period_label
     ),
+
     supervisor_id: id,
   });
 
@@ -835,7 +849,7 @@ function canSupervisorTakeProfessor(
 // Consecutive Period Score
 // ============================================================
 
-// بنعطي أفضلية للفترة اللي بتيجي جنب فترات المشرف
+// بنعطي أفضلية للفترات اللي بتكون جنب بعض
 function getProfessorConsecutiveScore(
   supervisor,
   professorBundles
@@ -902,14 +916,14 @@ function getProfessorConsecutiveScore(
       new Set();
 
     for (const rank of candidateRanks) {
-      // مثال: المشرف عنده 1 والدكتور عنده 2
+      // المشرف عنده الفترة السابقة
       if (
         existingRanks.has(rank - 1)
       ) {
         score += 100;
       }
 
-      // مثال: المشرف عنده 3 والدكتور عنده 2
+      // المشرف عنده الفترة التالية
       if (
         existingRanks.has(rank + 1)
       ) {
@@ -936,6 +950,7 @@ function getProfessorConsecutiveScore(
         ].sort((a, b) => a - b);
 
         const minRank = sorted[0];
+
         const maxRank =
           sorted[sorted.length - 1];
 
@@ -948,7 +963,7 @@ function getProfessorConsecutiveScore(
         }
       }
 
-      // إذا عنده سلسة فترات متتابعة
+      // إذا عنده سلسلة فترات متتابعة
       if (
         existingRanks.has(rank - 1) &&
         existingRanks.has(rank - 2)
@@ -962,48 +977,70 @@ function getProfessorConsecutiveScore(
 }
 
 // ============================================================
-// ⭐ MANDATORY NEXT PERIOD
+// ⭐ NEW: Period Continuity Score
 // ============================================================
-
-// هذه القاعدة الجديدة هي الأهم.
 //
-// إذا المشرف أخذ:
-// 1 ثم 2
+// الهدف من هذه الدالة:
 //
-// والدكتور الحالي عنده:
+// مش بس نسأل:
+// "هل الفترة الجديدة تأتي بعد فترة موجودة؟"
+//
+// وإنما نسأل:
+//
+// "بعد إضافة الدكتور لهذا المشرف، هل فترات المشرف
+// أصبحت أكثر اتصالاً وأقل فراغات؟"
+//
+// أمثلة:
+//
+// الموجود:
+// 1, 2
+//
+// المرشح:
 // 3
 //
-// فإن المشرف الذي عنده 2 يحصل على أولوية إجبارية
-// قبل fairness و quota و daily load.
+// النتيجة:
+// 1, 2, 3
+// => ممتاز جداً
 //
-// لا نستخدمها إلا عندما يكون الانتقال هو:
-// existing period -> existing period + 1
+// ------------------------------------------------------------
 //
-// مثال:
-// Supervisor 1:
-// 1
-// 2
+// الموجود:
+// 1, 2, 4
 //
-// Current Professor:
+// المرشح:
 // 3
 //
-// => Supervisor 1 MUST be considered first.
+// النتيجة:
+// 1, 2, 3, 4
+// => هذا يغلق الفراغ
+// => ممتاز جداً
 //
-// أما:
-// Supervisor 1:
-// 1
-// 2
+// ------------------------------------------------------------
 //
-// Current Professor:
+// الموجود:
+// 1, 2
+//
+// المرشح:
 // 4
 //
-// => لا يوجد إجبار، ونرجع للترتيب الطبيعي.
+// النتيجة:
+// 1, 2, 4
+// => صار في فراغ عند 3
+// => نعطيه أولوية أقل
 //
-function getMandatoryNextPeriodScore(
+// ============================================================
+
+function getPeriodContinuityScore(
   supervisor,
   professorBundles
 ) {
   let score = 0;
+
+  const candidateByDay = new Map();
+
+  // ----------------------------------------------------------
+  // نجمع فترات الدكتور حسب اليوم
+  // ----------------------------------------------------------
 
   for (const bundle of professorBundles) {
     const representative =
@@ -1032,28 +1069,332 @@ function getMandatoryNextPeriodScore(
       continue;
     }
 
-    const existingRanks =
-      supervisor.byDayPeriodRanks?.[day];
-
-    if (!existingRanks) {
-      continue;
+    if (!candidateByDay.has(day)) {
+      candidateByDay.set(
+        day,
+        new Set()
+      );
     }
 
-    // ========================================================
-    // ⭐ الحالة المطلوبة:
-    //
-    // Supervisor has period 2
-    // Current professor has period 3
-    //
-    // => Mandatory continuation
-    // ========================================================
+    candidateByDay
+      .get(day)
+      .add(rank);
+  }
 
-    if (existingRanks.has(rank - 1)) {
-      score += 1000000000;
+  // ----------------------------------------------------------
+  // Helper: أطول سلسلة متصلة
+  // ----------------------------------------------------------
+
+  function longestContinuousRun(set) {
+    const ranks = [...set].sort(
+      (a, b) => a - b
+    );
+
+    if (!ranks.length) {
+      return 0;
+    }
+
+    let best = 1;
+    let current = 1;
+
+    for (let i = 1; i < ranks.length; i++) {
+      if (
+        ranks[i] ===
+        ranks[i - 1] + 1
+      ) {
+        current++;
+
+        if (current > best) {
+          best = current;
+        }
+      } else {
+        current = 1;
+      }
+    }
+
+    return best;
+  }
+
+  // ----------------------------------------------------------
+  // Helper: عدد الفراغات داخل الفترة الدنيا والعليا
+  // ----------------------------------------------------------
+
+  function countInternalGaps(set) {
+    const ranks = [...set].sort(
+      (a, b) => a - b
+    );
+
+    if (ranks.length < 2) {
+      return 0;
+    }
+
+    const minRank = ranks[0];
+
+    const maxRank =
+      ranks[ranks.length - 1];
+
+    const expectedCount =
+      maxRank - minRank + 1;
+
+    const actualCount =
+      new Set(ranks).size;
+
+    return Math.max(
+      0,
+      expectedCount - actualCount
+    );
+  }
+
+  // ----------------------------------------------------------
+  // لكل يوم
+  // ----------------------------------------------------------
+
+  for (const [
+    day,
+    candidateRanks,
+  ] of candidateByDay) {
+    const existingRanks =
+      new Set(
+        supervisor
+          .byDayPeriodRanks?.[day] || []
+      );
+
+    // قبل الإضافة
+    const beforeRun =
+      longestContinuousRun(
+        existingRanks
+      );
+
+    const beforeGaps =
+      countInternalGaps(
+        existingRanks
+      );
+
+    // --------------------------------------------------------
+    // نعمل تصور لما سيحدث بعد إضافة الدكتور
+    // --------------------------------------------------------
+
+    const afterRanks =
+      new Set(existingRanks);
+
+    for (const rank of candidateRanks) {
+      afterRanks.add(rank);
+    }
+
+    // بعد الإضافة
+    const afterRun =
+      longestContinuousRun(
+        afterRanks
+      );
+
+    const afterGaps =
+      countInternalGaps(
+        afterRanks
+      );
+
+    // --------------------------------------------------------
+    // 1. زيادة طول السلسلة المتصلة
+    // --------------------------------------------------------
+
+    const runGrowth =
+      afterRun - beforeRun;
+
+    score +=
+      runGrowth * 10000;
+
+    // --------------------------------------------------------
+    // 2. تقليل الفراغات
+    // --------------------------------------------------------
+
+    const gapReduction =
+      beforeGaps - afterGaps;
+
+    score +=
+      gapReduction * 15000;
+
+    // --------------------------------------------------------
+    // 3. نعطي أولوية قوية للفترة اللي تسكر فراغ
+    //
+    // مثال:
+    // 1,2,4 + 3
+    //
+    // --------------------------------------------------------
+
+    for (const rank of candidateRanks) {
+      const fillsGap =
+        existingRanks.has(rank - 1) &&
+        existingRanks.has(rank + 1);
+
+      if (fillsGap) {
+        score += 20000;
+      }
+
+      // ------------------------------------------------------
+      // الفترة تكمل مباشرة من اليسار
+      // 1,2 + 3
+      // ------------------------------------------------------
+
+      if (
+        existingRanks.has(rank - 1)
+      ) {
+        score += 12000;
+      }
+
+      // ------------------------------------------------------
+      // الفترة تكمل مباشرة من اليمين
+      // 3 + 4
+      // ------------------------------------------------------
+
+      if (
+        existingRanks.has(rank + 1)
+      ) {
+        score += 10000;
+      }
+
+      // ------------------------------------------------------
+      // عنده سلسلتين قبل الفترة
+      //
+      // 1,2 + 3
+      // ------------------------------------------------------
+
+      if (
+        existingRanks.has(rank - 1) &&
+        existingRanks.has(rank - 2)
+      ) {
+        score += 8000;
+      }
+
+      // ------------------------------------------------------
+      // الفترة موجودة داخل نطاق فيه فراغ
+      // ------------------------------------------------------
+
+      if (existingRanks.size >= 2) {
+        const sorted = [
+          ...existingRanks,
+        ].sort((a, b) => a - b);
+
+        const minRank =
+          sorted[0];
+
+        const maxRank =
+          sorted[sorted.length - 1];
+
+        if (
+          rank > minRank &&
+          rank < maxRank &&
+          !existingRanks.has(rank)
+        ) {
+          score += 18000;
+        }
+      }
+    }
+
+    // --------------------------------------------------------
+    // 4. إذا الدكتور نفسه يحتوي على فترات متتابعة
+    // --------------------------------------------------------
+
+    const candidateRun =
+      longestContinuousRun(
+        candidateRanks
+      );
+
+    if (candidateRun > 1) {
+      score +=
+        (candidateRun - 1) * 3000;
+    }
+
+    // --------------------------------------------------------
+    // 5. إذا الإضافة عملت فراغ جديد
+    //
+    // نعاقبها حتى نحاول عدم تكوين:
+    //
+    // 1,2,4
+    //
+    // --------------------------------------------------------
+
+    const newGaps =
+      afterGaps - beforeGaps;
+
+    if (newGaps > 0) {
+      score -=
+        newGaps * 12000;
+    }
+
+    // --------------------------------------------------------
+    // 6. إذا أصبحت كل الفترات في نطاق متصل
+    //
+    // مثال:
+    // 1,2,3,4
+    //
+    // --------------------------------------------------------
+
+    if (
+      afterRanks.size > 0 &&
+      afterGaps === 0
+    ) {
+      score += 10000;
     }
   }
 
   return score;
+}
+
+// ============================================================
+// ⭐ Continuity Priority
+// ============================================================
+//
+// هذه الدالة تعطي أولوية خاصة للحالات اللي لازم نحافظ فيها
+// على تسلسل الفترات.
+//
+// الهدف:
+//
+// إذا عندنا:
+//
+// Supervisor A:
+// 1,2
+//
+// Supervisor B:
+// 1
+//
+// والدكتور الحالي عنده:
+// 3
+//
+// A يأخذ أولوية كبيرة جداً.
+//
+// ------------------------------------------------------------
+//
+// وإذا:
+//
+// Supervisor A:
+// 1,2,4
+//
+// والدكتور الحالي:
+// 3
+//
+// A أيضاً يأخذ أولوية كبيرة جداً لأنه يغلق الفراغ.
+//
+// ============================================================
+
+function getContinuityPriority(
+  supervisor,
+  professorBundles
+) {
+  const continuityScore =
+    getPeriodContinuityScore(
+      supervisor,
+      professorBundles
+    );
+
+  const consecutiveScore =
+    getProfessorConsecutiveScore(
+      supervisor,
+      professorBundles
+    );
+
+  return (
+    continuityScore +
+    consecutiveScore * 10
+  );
 }
 
 // ============================================================
@@ -1343,7 +1684,10 @@ function getQuotaScore(
   if (!globalMinimumReached) {
     if (belowTarget) {
       score += 1000000;
-      score += deficit * 10000;
+
+      score +=
+        deficit * 10000;
+
       score +=
         (deficit - projectedDeficit) *
         5000;
@@ -1354,11 +1698,15 @@ function getQuotaScore(
 
   return {
     score,
+
     projected,
+
     distance: Math.abs(
       target - projected
     ),
+
     deficit,
+
     belowTarget,
   };
 }
@@ -1653,6 +2001,21 @@ async function generatePlan(
     aff.length
   );
 
+  // ==========================================================
+  // Result State
+  // ==========================================================
+
+  const result = [];
+
+  const conflicts = [];
+
+  const bundleAssignments =
+    new Map();
+
+  // ==========================================================
+  // Load Affinities
+  // ==========================================================
+
   for (const item of aff) {
     const supervisorId =
       Number(
@@ -1685,15 +2048,19 @@ async function generatePlan(
       conflicts.push({
         type:
           "AFFINITY_SUPERVISOR_NOT_SELECTED",
+
         professor:
           item.professor_name ||
           item.name ||
           "",
+
         professor_id:
           item.professor_id ??
           null,
+
         supervisor_id:
           supervisorId,
+
         message:
           "The affinity supervisor is not in the selected Duty Pool.",
       });
@@ -1756,17 +2123,6 @@ async function generatePlan(
   console.log(
     `🔗 Professor name affinities: ${professorNameAffinity.size}`
   );
-
-  // ==========================================================
-  // Result State
-  // ==========================================================
-
-  const result = [];
-
-  const conflicts = [];
-
-  const bundleAssignments =
-    new Map();
 
   // ==========================================================
   // Build Bundles
@@ -2127,10 +2483,6 @@ async function generatePlan(
   }
 
   // ==========================================================
-  // Professor Affinity
-  // ==========================================================
-
-  // ==========================================================
   // Apply Professor Affinities
   // ==========================================================
 
@@ -2425,19 +2777,34 @@ async function generatePlan(
           allQuotasReached
         );
 
-      // بنحسب أفضلية الفترات المتتالية
+      // --------------------------------------------------------
+      // الفترات المتتالية القديمة
+      // --------------------------------------------------------
+
       const consecutiveScore =
         getProfessorConsecutiveScore(
           supervisor,
           professor.bundles
         );
 
-      // ======================================================
-      // ⭐ التعديل الجديد
-      // ======================================================
+      // --------------------------------------------------------
+      // ⭐ التعديل الرئيسي
+      //
+      // نحسب مدى اتصال الفترات بعد إضافة الدكتور
+      // --------------------------------------------------------
 
-      const mandatoryNextPeriodScore =
-        getMandatoryNextPeriodScore(
+      const periodContinuityScore =
+        getPeriodContinuityScore(
+          supervisor,
+          professor.bundles
+        );
+
+      // --------------------------------------------------------
+      // ⭐ الأولوية النهائية للاستمرارية
+      // --------------------------------------------------------
+
+      const continuityPriority =
+        getContinuityPriority(
           supervisor,
           professor.bundles
         );
@@ -2485,10 +2852,10 @@ async function generatePlan(
 
         score =
           // ==================================================
-          // ⭐ أول وأقوى أولوية:
-          // الفترة الحالية تكمل فترة المشرف السابقة
+          // ⭐ الاستمرارية أولاً
           // ==================================================
-          mandatoryNextPeriodScore +
+
+          continuityPriority * 1000 +
 
           // المشرف تحت الهدف
           (currentTotal < target
@@ -2514,10 +2881,7 @@ async function generatePlan(
             1000 -
 
           // Fairness
-          projectedTotal * 10 +
-
-          // الفترات المتتالية
-          consecutiveScore * 20 -
+          projectedTotal * 10 -
 
           // ضغط اليوم
           dailyLoad * 5;
@@ -2533,10 +2897,10 @@ async function generatePlan(
 
         score =
           // ==================================================
-          // ⭐ أول وأقوى أولوية:
-          // الفترة الحالية تكمل فترة المشرف السابقة
+          // ⭐ الاستمرارية هي الأولوية الأساسية
           // ==================================================
-          mandatoryNextPeriodScore +
+
+          continuityPriority * 1000 +
 
           // كل مشرف يأخذ دكتور أول
           (noProfessorYet
@@ -2545,12 +2909,9 @@ async function generatePlan(
 
           // نوازن مجموع الفترات
           projectedTotal *
-            10000 +
+            10000 -
 
-          // نفضل الفترات المتتالية
-          consecutiveScore * 10 -
-
-          // نقلل ضغط اليوم
+          // ضغط اليوم
           dailyLoad * 2;
       }
 
@@ -2565,7 +2926,9 @@ async function generatePlan(
 
         consecutiveScore,
 
-        mandatoryNextPeriodScore,
+        periodContinuityScore,
+
+        continuityPriority,
 
         dailyLoad,
 
@@ -2619,46 +2982,40 @@ async function generatePlan(
 
     ranked.sort((a, b) => {
       // ======================================================
-      // ⭐ 1. MANDATORY NEXT PERIOD
+      // ⭐ 1. CONTINUITY
       //
-      // إذا A يكمل الفترة السابقة مباشرة
-      // و B لا يكملها
+      // هذه الآن أهم قاعدة:
       //
-      // A لازم يفوز أولاً
-      // بغض النظر عن fairness
+      // نفضل المشرف الذي سيجعل فتراته أكثر اتصالاً
+      // ويقلل الفراغات.
       // ======================================================
 
-      const aMandatory =
-        a.mandatoryNextPeriodScore >
-        0;
-
-      const bMandatory =
-        b.mandatoryNextPeriodScore >
-        0;
-
       if (
-        aMandatory !==
-        bMandatory
-      ) {
-        return aMandatory
-          ? -1
-          : 1;
-      }
-
-      // إذا الاثنين عندهم continuation
-      // نفضل اللي عنده عدد أكبر من continuations
-      if (
-        a.mandatoryNextPeriodScore !==
-        b.mandatoryNextPeriodScore
+        a.continuityPriority !==
+        b.continuityPriority
       ) {
         return (
-          b.mandatoryNextPeriodScore -
-          a.mandatoryNextPeriodScore
+          b.continuityPriority -
+          a.continuityPriority
         );
       }
 
       // ======================================================
-      // 2. إذا الـ quotas لسه ما خلصت
+      // ⭐ 2. إغلاق الفراغات
+      // ======================================================
+
+      if (
+        a.periodContinuityScore !==
+        b.periodContinuityScore
+      ) {
+        return (
+          b.periodContinuityScore -
+          a.periodContinuityScore
+        );
+      }
+
+      // ======================================================
+      // 3. إذا الـ quotas لسه ما خلصت
       // ======================================================
 
       if (!allQuotasReached) {
@@ -2694,7 +3051,7 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 3. أقل عدد فترات متوقع
+      // 4. أقل عدد فترات متوقع
       // ======================================================
 
       if (
@@ -2708,7 +3065,7 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 4. الفترات المتتالية
+      // 5. الفترات المتتالية
       // ======================================================
 
       if (
@@ -2722,7 +3079,7 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 5. ضغط اليوم
+      // 6. ضغط اليوم
       // ======================================================
 
       if (
@@ -2736,7 +3093,7 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 6. عدد الدكاترة
+      // 7. عدد الدكاترة
       // ======================================================
 
       if (
@@ -2750,7 +3107,7 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 7. Random
+      // 8. Random
       // ======================================================
 
       return shuffle([-1, 1])[0];
@@ -2762,11 +3119,11 @@ async function generatePlan(
 
     if (
       ranked[0]
-        .mandatoryNextPeriodScore >
+        .periodContinuityScore !==
       0
     ) {
       console.log(
-        "⭐ MANDATORY CONSECUTIVE PERIOD:",
+        "⭐ PERIOD CONTINUITY PRIORITY:",
         {
           professor:
             professor.professor,
@@ -2774,9 +3131,17 @@ async function generatePlan(
           supervisor:
             ranked[0].supervisorId,
 
-          mandatoryScore:
+          continuityPriority:
             ranked[0]
-              .mandatoryNextPeriodScore,
+              .continuityPriority,
+
+          periodContinuityScore:
+            ranked[0]
+              .periodContinuityScore,
+
+          consecutiveScore:
+            ranked[0]
+              .consecutiveScore,
 
           currentTotal:
             ranked[0]
@@ -2789,7 +3154,10 @@ async function generatePlan(
       );
     }
 
+    // ========================================================
     // أول واحد بعد الترتيب هو الأنسب
+    // ========================================================
+
     const selected =
       ranked[0];
 
