@@ -1,3 +1,4 @@
+
 const {
   createPlanRow,
   saveDutyPool,
@@ -25,7 +26,10 @@ function handleError(
   err,
   message = "Internal server error"
 ) {
-  console.error(`❌ ${message}:`, err);
+  console.error(
+    `❌ ${message}:`,
+    err
+  );
 
   return res.status(500).json({
     success: false,
@@ -68,7 +72,8 @@ async function createPlan(req, res) {
     ) {
       return res.status(400).json({
         success: false,
-        error: "Invalid dateFrom or dateTo",
+        error:
+          "Invalid dateFrom or dateTo",
       });
     }
 
@@ -87,11 +92,15 @@ async function createPlan(req, res) {
       dateTo,
     });
 
-    console.log("✅ Created plan:", plan);
+    console.log(
+      "✅ Created plan:",
+      plan
+    );
 
     return res.status(201).json({
       success: true,
-      message: "Plan created successfully",
+      message:
+        "Plan created successfully",
       data: plan,
     });
   } catch (err) {
@@ -107,11 +116,28 @@ async function createPlan(req, res) {
 // Set Duty Pool
 // =====================================================
 
+// =====================================================
+// Set Duty Pool
+// =====================================================
+
 async function setDutyPool(req, res) {
   try {
     const { planId } = req.params;
     const { supervisorIds } = req.body;
 
+    console.log("========================================");
+    console.log("🎯 SET DUTY POOL");
+    console.log("📌 planId:", planId);
+    console.log("📌 supervisorIds received:", supervisorIds);
+    console.log(
+      "📌 supervisorIds type:",
+      Array.isArray(supervisorIds)
+        ? "array"
+        : typeof supervisorIds
+    );
+    console.log("========================================");
+
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -119,31 +145,53 @@ async function setDutyPool(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error: "planId must be a valid integer",
-      });
-    }
-
     if (!Array.isArray(supervisorIds)) {
       return res.status(400).json({
         success: false,
-        error:
-          "supervisorIds must be an array",
+        error: "supervisorIds must be an array",
       });
     }
 
+    // ندعم أكثر من شكل قادم من الـ Frontend:
+    // 1) [1, 2, 3]
+    // 2) ["1", "2", "3"]
+    // 3) [{ id: 1 }, { id: 2 }]
+    // 4) [{ supervisor_id: 1 }, { supervisor_id: 2 }]
     const uniqueIds = Array.from(
       new Set(
         supervisorIds
-          .map(Number)
+          .map((item) => {
+            // إذا كان ID مباشر
+            if (
+              typeof item === "number" ||
+              typeof item === "string"
+            ) {
+              return Number(item);
+            }
+
+            // إذا كان Object
+            if (
+              item &&
+              typeof item === "object"
+            ) {
+              return Number(
+                item.id ??
+                item.supervisorId ??
+                item.supervisor_id
+              );
+            }
+
+            return NaN;
+          })
           .filter((id) =>
             Number.isInteger(id)
           )
       )
+    );
+
+    console.log(
+      "📌 normalized supervisor IDs:",
+      uniqueIds
     );
 
     if (!uniqueIds.length) {
@@ -155,8 +203,12 @@ async function setDutyPool(req, res) {
     }
 
     await saveDutyPool(
-      parsedPlanId,
+      planId,
       uniqueIds
+    );
+
+    console.log(
+      "✅ Duty pool saved successfully"
     );
 
     return res.json({
@@ -180,24 +232,19 @@ async function setDutyPool(req, res) {
 // Set Period Quotas
 // =====================================================
 
-async function setPeriodQuotas(req, res) {
+async function setPeriodQuotas(
+  req,
+  res
+) {
   try {
     const { planId } = req.params;
     const { supervisors } = req.body;
 
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
         error: "planId is required",
-      });
-    }
-
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error: "planId must be a valid integer",
       });
     }
 
@@ -216,11 +263,18 @@ async function setPeriodQuotas(req, res) {
     const normalized = {};
 
     for (
-      const [supervisorId, targetPeriods] of
-      Object.entries(supervisors)
+      const [
+        supervisorId,
+        targetPeriods,
+      ] of Object.entries(supervisors)
     ) {
-      const sid = Number(supervisorId);
-      const target = Number(targetPeriods);
+      const sid = Number(
+        supervisorId
+      );
+
+      const target = Number(
+        targetPeriods
+      );
 
       if (!Number.isInteger(sid)) {
         continue;
@@ -241,7 +295,7 @@ async function setPeriodQuotas(req, res) {
     }
 
     await savePeriodQuotas(
-      parsedPlanId,
+      planId,
       normalized
     );
 
@@ -250,7 +304,8 @@ async function setPeriodQuotas(req, res) {
       message:
         "Period quotas saved successfully",
       data: {
-        supervisors: normalized,
+        supervisors:
+          normalized,
       },
     });
   } catch (err) {
@@ -266,11 +321,15 @@ async function setPeriodQuotas(req, res) {
 // Add Preassignments
 // =====================================================
 
-async function addPreassignments(req, res) {
+async function addPreassignments(
+  req,
+  res
+) {
   try {
     const { planId } = req.params;
     const items = req.body;
 
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -278,24 +337,16 @@ async function addPreassignments(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error: "planId must be a valid integer",
-      });
-    }
-
     if (!Array.isArray(items)) {
       return res.status(400).json({
         success: false,
-        error: "Body must be an array",
+        error:
+          "Body must be an array",
       });
     }
 
     await savePreassignments(
-      parsedPlanId,
+      planId,
       items
     );
 
@@ -318,11 +369,15 @@ async function addPreassignments(req, res) {
 // Add Affinities
 // =====================================================
 
-async function addAffinities(req, res) {
+async function addAffinities(
+  req,
+  res
+) {
   try {
     const { planId } = req.params;
     const items = req.body;
 
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -330,24 +385,16 @@ async function addAffinities(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error: "planId must be a valid integer",
-      });
-    }
-
     if (!Array.isArray(items)) {
       return res.status(400).json({
         success: false,
-        error: "Body must be an array",
+        error:
+          "Body must be an array",
       });
     }
 
     await saveAffinities(
-      parsedPlanId,
+      planId,
       items
     );
 
@@ -370,7 +417,10 @@ async function addAffinities(req, res) {
 // Generate Plan
 // =====================================================
 
-async function generate(req, res) {
+async function generate(
+  req,
+  res
+) {
   try {
     const { planId } = req.params;
 
@@ -378,6 +428,7 @@ async function generate(req, res) {
       variant = 1,
     } = req.body || {};
 
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -385,19 +436,13 @@ async function generate(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error: "planId must be a valid integer",
-      });
-    }
-
-    const parsedVariant = Number(variant);
+    const parsedVariant =
+      Number(variant);
 
     if (
-      !Number.isInteger(parsedVariant) ||
+      !Number.isInteger(
+        parsedVariant
+      ) ||
       parsedVariant < 1
     ) {
       return res.status(400).json({
@@ -408,13 +453,14 @@ async function generate(req, res) {
     }
 
     console.log(
-      `🚀 Generating plan ${parsedPlanId}, variant ${parsedVariant}`
+      `🚀 Generating plan ${planId}, variant ${parsedVariant}`
     );
 
-    const generated = await generatePlan(
-      parsedPlanId,
-      parsedVariant
-    );
+    const generated =
+      await generatePlan(
+        planId,
+        parsedVariant
+      );
 
     console.log(
       "✅ Generated plan:",
@@ -433,7 +479,7 @@ async function generate(req, res) {
         generated.stats || null,
 
       downloadUrl:
-        `/exports/plan_${parsedPlanId}.xlsx`,
+        `/exports/plan_${planId}.xlsx`,
     });
   } catch (err) {
     return handleError(
@@ -448,15 +494,14 @@ async function generate(req, res) {
 // Get One Plan
 // =====================================================
 
-async function getPlan(req, res) {
+async function getPlan(
+  req,
+  res
+) {
   try {
     const { planId } = req.params;
 
-    console.log(
-      "🔎 GET PLAN request:",
-      planId
-    );
-
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -464,36 +509,21 @@ async function getPlan(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "planId must be a valid integer",
-      });
-    }
-
     console.log(
       "🔎 Fetching plan:",
-      parsedPlanId
+      planId
     );
 
-    const plan = await fetchPlan(
-      parsedPlanId
-    );
+    const plan =
+      await fetchPlan(planId);
 
     if (!plan) {
       return res.status(404).json({
         success: false,
-        error: "Plan not found",
+        error:
+          "Plan not found",
       });
     }
-
-    console.log(
-      "✅ Plan fetched successfully:",
-      parsedPlanId
-    );
 
     return res.json({
       success: true,
@@ -514,9 +544,13 @@ async function getPlan(req, res) {
 // Get All Plans
 // =====================================================
 
-async function getPlans(req, res) {
+async function getPlans(
+  req,
+  res
+) {
   try {
-    const plans = await getAllPlans();
+    const plans =
+      await getAllPlans();
 
     return res.json({
       success: true,
@@ -537,15 +571,20 @@ async function getPlans(req, res) {
 // Lock Assignment
 // =====================================================
 
-async function lockAssignment(req, res) {
+async function lockAssignment(
+  req,
+  res
+) {
   try {
-    const { planId } = req.params;
+    const { planId } =
+      req.params;
 
     const {
       sessionGroupId,
       supervisorId,
     } = req.body;
 
+    // planId هو UUID
     if (
       !planId ||
       sessionGroupId == null ||
@@ -558,26 +597,29 @@ async function lockAssignment(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
     const parsedSessionGroupId =
       Number(sessionGroupId);
+
     const parsedSupervisorId =
       Number(supervisorId);
 
     if (
-      !Number.isInteger(parsedPlanId) ||
-      !Number.isInteger(parsedSessionGroupId) ||
-      !Number.isInteger(parsedSupervisorId)
+      !Number.isInteger(
+        parsedSessionGroupId
+      ) ||
+      !Number.isInteger(
+        parsedSupervisorId
+      )
     ) {
       return res.status(400).json({
         success: false,
         error:
-          "planId, sessionGroupId and supervisorId must be valid integers",
+          "sessionGroupId and supervisorId must be valid integers",
       });
     }
 
     await lockRow(
-      parsedPlanId,
+      planId,
       parsedSessionGroupId,
       parsedSupervisorId
     );
@@ -601,13 +643,17 @@ async function lockAssignment(req, res) {
 // Unlock Assignment
 // =====================================================
 
-async function unlockAssignment(req, res) {
+async function unlockAssignment(
+  req,
+  res
+) {
   try {
     const {
       planId,
       sessionGroupId,
     } = req.params;
 
+    // planId هو UUID
     if (
       !planId ||
       !sessionGroupId
@@ -619,23 +665,23 @@ async function unlockAssignment(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
     const parsedSessionGroupId =
       Number(sessionGroupId);
 
     if (
-      !Number.isInteger(parsedPlanId) ||
-      !Number.isInteger(parsedSessionGroupId)
+      !Number.isInteger(
+        parsedSessionGroupId
+      )
     ) {
       return res.status(400).json({
         success: false,
         error:
-          "planId and sessionGroupId must be valid integers",
+          "sessionGroupId must be a valid integer",
       });
     }
 
     await unlockRow(
-      parsedPlanId,
+      planId,
       parsedSessionGroupId
     );
 
@@ -658,9 +704,13 @@ async function unlockAssignment(req, res) {
 // Move Assignment
 // =====================================================
 
-async function moveAssignment(req, res) {
+async function moveAssignment(
+  req,
+  res
+) {
   try {
-    const { planId } = req.params;
+    const { planId } =
+      req.params;
 
     const {
       fromSupervisorId,
@@ -668,6 +718,7 @@ async function moveAssignment(req, res) {
       sessionGroupId,
     } = req.body;
 
+    // planId هو UUID
     if (
       !planId ||
       fromSupervisorId == null ||
@@ -681,29 +732,35 @@ async function moveAssignment(req, res) {
       });
     }
 
-    const parsedPlanId = Number(planId);
     const parsedFromSupervisorId =
       Number(fromSupervisorId);
+
     const parsedToSupervisorId =
       Number(toSupervisorId);
+
     const parsedSessionGroupId =
       Number(sessionGroupId);
 
     if (
-      !Number.isInteger(parsedPlanId) ||
-      !Number.isInteger(parsedFromSupervisorId) ||
-      !Number.isInteger(parsedToSupervisorId) ||
-      !Number.isInteger(parsedSessionGroupId)
+      !Number.isInteger(
+        parsedFromSupervisorId
+      ) ||
+      !Number.isInteger(
+        parsedToSupervisorId
+      ) ||
+      !Number.isInteger(
+        parsedSessionGroupId
+      )
     ) {
       return res.status(400).json({
         success: false,
         error:
-          "All IDs must be valid integers",
+          "Supervisor IDs and sessionGroupId must be valid integers",
       });
     }
 
     await moveAssignmentSvc(
-      parsedPlanId,
+      planId,
       {
         fromSupervisorId:
           parsedFromSupervisorId,
@@ -735,30 +792,25 @@ async function moveAssignment(req, res) {
 // Get Stats
 // =====================================================
 
-async function getStats(req, res) {
+async function getStats(
+  req,
+  res
+) {
   try {
-    const { planId } = req.params;
+    const { planId } =
+      req.params;
 
+    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
-        error: "planId is required",
-      });
-    }
-
-    const parsedPlanId = Number(planId);
-
-    if (!Number.isInteger(parsedPlanId)) {
-      return res.status(400).json({
-        success: false,
         error:
-          "planId must be a valid integer",
+          "planId is required",
       });
     }
 
-    const stats = await planStats(
-      parsedPlanId
-    );
+    const stats =
+      await planStats(planId);
 
     return res.json({
       success: true,
