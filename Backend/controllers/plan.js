@@ -13,9 +13,7 @@ const {
 
 } = require("../services/plan.js");
 
-const {
-  generatePlan,
-} = require("../services/excel.js");
+
 
 // =====================================================
 // Error Handler
@@ -689,38 +687,7 @@ async function getPlans(req, res) {
 // Exports
 // =====================================================
 
-module.exports = {
-  createPlan,
 
-  setDutyPool,
-  setPeriodQuotas,
-
-  addPreassignments,
-  addAffinities,
-
-  generate,
-  getPlan,
-
-  lockAssignment,
-  unlockAssignment,
-
-  moveAssignment,
-
-  getStats,
-  getPlans,
-};const {
-createPlanRow,
-saveDutyPool,
-savePeriodQuotas,
-savePreassignments,
-saveAffinities,
-fetchPlan,
-lockRow,
-unlockRow,
-moveAssignmentSvc,
-planStats,
-getAllPlans,
-} = require("../services/plan.js");
 
 const {
 generatePlan,
@@ -1463,16 +1430,22 @@ err,
 // =====================================================
 
 module.exports = {
-createPlan,
-setDutyPool,
-setPeriodQuotas,
-addPreassignments,
-addAffinities,
-generate,
-getPlan,
-getPlans,
-lockAssignment,
-unlockAssignment,
-moveAssignment,
-getStats,
+  createPlan,
+
+  setDutyPool,
+  setPeriodQuotas,
+
+  addPreassignments,
+  addAffinities,
+
+  generate,
+  getPlan,
+
+  lockAssignment,
+  unlockAssignment,
+
+  moveAssignment,
+
+  getStats,
+  getPlans,
 };
