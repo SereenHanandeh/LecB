@@ -89,12 +89,22 @@ async function getDutyPool(planId) {
 // =====================================================
 // Period Quotas
 // =====================================================
+// =====================================================
+// Period Quotas
+// =====================================================
 
 // حفظ عدد الفترات المستهدف لكل مشرف
+//
+// Dashboard يرسل Array بهذا الشكل:
+//
+// [
+//   { supervisorId: 1, quota: 10 },
+//   { supervisorId: 2, quota: 12 }
+// ]
 
 async function savePeriodQuotas(
   planId,
-  supervisors = {}
+  supervisors = []
 ) {
   console.log(
     "🎯 SAVING PERIOD QUOTAS:",
@@ -104,6 +114,10 @@ async function savePeriodQuotas(
     }
   );
 
+  // ---------------------------------------------------
+  // حذف الـ quotas القديمة للخطة
+  // ---------------------------------------------------
+
   await pool.query(
     `
     DELETE FROM plan_period_quotas
@@ -112,52 +126,76 @@ async function savePeriodQuotas(
     [planId]
   );
 
+  // ---------------------------------------------------
+  // التأكد من البيانات
+  // ---------------------------------------------------
+
   if (
-    !supervisors ||
-    typeof supervisors !== "object"
+    !Array.isArray(supervisors) ||
+    supervisors.length === 0
   ) {
     console.log(
-      "⚠️ No period quotas received."
+      "ℹ️ No period quotas received."
     );
 
-    return;
+    return [];
   }
 
-  for (
-    const [supervisorId, targetPeriods]
-    of Object.entries(supervisors)
-  ) {
-    const sid =
-      Number(supervisorId);
+  const saved = [];
 
-    const target =
-      Number(targetPeriods);
+  // ---------------------------------------------------
+  // حفظ كل Quota
+  // ---------------------------------------------------
 
-    if (
-      !Number.isInteger(sid)
-    ) {
+  for (const item of supervisors) {
+    const sid = Number(
+      item.supervisorId ??
+      item.supervisor_id
+    );
+
+    const target = Number(
+      item.quota ??
+      item.targetPeriods ??
+      item.target_periods
+    );
+
+    // -------------------------------------------------
+    // التحقق من Supervisor ID
+    // -------------------------------------------------
+
+    if (!Number.isInteger(sid)) {
       console.warn(
-        `⚠️ Invalid supervisor ID in quota: ${supervisorId}`
+        `⚠️ Invalid supervisor ID in quota:`,
+        item
       );
 
       continue;
     }
+
+    // -------------------------------------------------
+    // التحقق من Target
+    // -------------------------------------------------
 
     if (
       !Number.isInteger(target) ||
       target <= 0
     ) {
       console.warn(
-        `⚠️ Invalid period quota for supervisor ${sid}: ${targetPeriods}`
+        `⚠️ Invalid period quota for supervisor ${sid}:`,
+        item
       );
 
       continue;
     }
 
+    // -------------------------------------------------
+    // التأكد أن المشرف موجود و Active
+    // -------------------------------------------------
+
     const supervisorCheck =
       await pool.query(
         `
-        SELECT id
+        SELECT id, name
         FROM supervisors
         WHERE id = $1
           AND active = TRUE
@@ -175,7 +213,11 @@ async function savePeriodQuotas(
       continue;
     }
 
-    await pool.query(
+    // -------------------------------------------------
+    // حفظ الـ Quota
+    // -------------------------------------------------
+
+    const result = await pool.query(
       `
       INSERT INTO plan_period_quotas (
         plan_id,
@@ -183,10 +225,13 @@ async function savePeriodQuotas(
         target_periods
       )
       VALUES ($1, $2, $3)
+
       ON CONFLICT (plan_id, supervisor_id)
       DO UPDATE SET
         target_periods =
           EXCLUDED.target_periods
+
+      RETURNING *
       `,
       [
         planId,
@@ -195,12 +240,19 @@ async function savePeriodQuotas(
       ]
     );
 
+    saved.push(
+      result.rows[0]
+    );
+
     console.log(
       `✅ Quota saved: supervisor ${sid} = ${target}`
     );
   }
 
+  // ---------------------------------------------------
   // تحقق بعد الحفظ
+  // ---------------------------------------------------
+
   const check =
     await getPeriodQuotas(planId);
 
@@ -208,6 +260,8 @@ async function savePeriodQuotas(
     "🎯 QUOTAS AFTER SAVE:",
     check
   );
+
+  return check;
 }
 
 // =====================================================

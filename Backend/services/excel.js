@@ -3030,139 +3030,177 @@ async function generatePlan(
     // ========================================================
     // ⭐ Sort Supervisors
     // ========================================================
+ranked.sort((a, b) => {
 
-    ranked.sort((a, b) => {
-      // ======================================================
-      // ⭐ 1. PERIOD CONTINUITY
-      //
-      // أهم تعديل:
-      //
-      // نخلي تقليل الـ gaps واستمرارية الفترات
-      // أهم من أي عامل ثانوي.
-      // ======================================================
+  // ======================================================
+  // 1. QUOTA
+  // ======================================================
 
+  if (!allQuotasReached) {
+
+    const aHasActiveQuota =
+      a.quota !== null &&
+      a.currentTotal < Number(a.quota);
+
+    const bHasActiveQuota =
+      b.quota !== null &&
+      b.currentTotal < Number(b.quota);
+
+    // المشرف الذي ما زال تحت الـ quota
+    // له أولوية على المشرف الذي لا يحتاج quota
+    if (
+      aHasActiveQuota !==
+      bHasActiveQuota
+    ) {
+      return aHasActiveQuota
+        ? -1
+        : 1;
+    }
+
+    // إذا الاثنين عندهم quota فعال
+    if (
+      aHasActiveQuota &&
+      bHasActiveQuota
+    ) {
+
+      const aDeficit =
+        Math.max(
+          0,
+          Number(a.quota) -
+          a.currentTotal
+        );
+
+      const bDeficit =
+        Math.max(
+          0,
+          Number(b.quota) -
+          b.currentTotal
+        );
+
+      // الأكبر deficit أولًا
       if (
-        a.periodContinuityScore !==
-        b.periodContinuityScore
+        aDeficit !==
+        bDeficit
       ) {
         return (
-          b.periodContinuityScore -
-          a.periodContinuityScore
+          bDeficit -
+          aDeficit
         );
       }
 
-      // ======================================================
-      // ⭐ 2. Continuity Priority
-      // ======================================================
+      // ==================================================
+      // أيهما أقرب لتحقيق الهدف بعد إضافة الدكتور؟
+      // ==================================================
 
       if (
-        a.continuityPriority !==
-        b.continuityPriority
+        a.quotaDistance !==
+        b.quotaDistance
       ) {
         return (
-          b.continuityPriority -
-          a.continuityPriority
+          a.quotaDistance -
+          b.quotaDistance
         );
       }
+    }
+  }
 
-      // ======================================================
-      // 3. إذا الـ quotas لسه ما خلصت
-      // ======================================================
+  // ======================================================
+  // 2. FAIRNESS
+  // ======================================================
 
-      if (!allQuotasReached) {
-        const aQuota =
-          a.quota !== null
-            ? Number(a.quota)
-            : null;
+  if (
+    a.projectedTotal !==
+    b.projectedTotal
+  ) {
+    return (
+      a.projectedTotal -
+      b.projectedTotal
+    );
+  }
 
-        const bQuota =
-          b.quota !== null
-            ? Number(b.quota)
-            : null;
+  // ======================================================
+  // 3. PERIOD CONTINUITY
+  // ======================================================
 
-        const aReached =
-          aQuota !== null &&
-          a.currentTotal >=
-            aQuota;
+  if (
+    a.periodContinuityScore !==
+    b.periodContinuityScore
+  ) {
+    return (
+      b.periodContinuityScore -
+      a.periodContinuityScore
+    );
+  }
 
-        const bReached =
-          bQuota !== null &&
-          b.currentTotal >=
-            bQuota;
+  // ======================================================
+  // 4. CONTINUITY PRIORITY
+  // ======================================================
 
-        // اللي وصل target نخليه بعد اللي لسه ما وصل
-        if (
-          aReached !==
-          bReached
-        ) {
-          return aReached
-            ? 1
-            : -1;
-        }
-      }
+  if (
+    a.continuityPriority !==
+    b.continuityPriority
+  ) {
+    return (
+      b.continuityPriority -
+      a.continuityPriority
+    );
+  }
 
-      // ======================================================
-      // 4. أقل عدد فترات متوقع
-      // ======================================================
+  // ======================================================
+  // 5. CONSECUTIVE PERIODS
+  // ======================================================
 
-      if (
-        a.projectedTotal !==
-        b.projectedTotal
-      ) {
-        return (
-          a.projectedTotal -
-          b.projectedTotal
-        );
-      }
+  if (
+    a.consecutiveScore !==
+    b.consecutiveScore
+  ) {
+    return (
+      b.consecutiveScore -
+      a.consecutiveScore
+    );
+  }
 
-      // ======================================================
-      // 5. الفترات المتتالية
-      // ======================================================
+  // ======================================================
+  // 6. DAILY LOAD
+  // ======================================================
 
-      if (
-        a.consecutiveScore !==
-        b.consecutiveScore
-      ) {
-        return (
-          b.consecutiveScore -
-          a.consecutiveScore
-        );
-      }
+  if (
+    a.dailyLoad !==
+    b.dailyLoad
+  ) {
+    return (
+      a.dailyLoad -
+      b.dailyLoad
+    );
+  }
 
-      // ======================================================
-      // 6. ضغط اليوم
-      // ======================================================
+  // ======================================================
+  // 7. NUMBER OF PROFESSORS
+  // ======================================================
 
-      if (
-        a.dailyLoad !==
-        b.dailyLoad
-      ) {
-        return (
-          a.dailyLoad -
-          b.dailyLoad
-        );
-      }
+  if (
+    a.professorCount !==
+    b.professorCount
+  ) {
+    return (
+      a.professorCount -
+      b.professorCount
+    );
+  }
 
-      // ======================================================
-      // 7. عدد الدكاترة
-      // ======================================================
+  // ======================================================
+  // 8. VARIANT RANDOMIZATION
+  // ======================================================
 
-      if (
-        a.professorCount !==
-        b.professorCount
-      ) {
-        return (
-          a.professorCount -
-          b.professorCount
-        );
-      }
-
-      // ======================================================
-      // 8. Random
-      // ======================================================
-
-      return shuffle([-1, 1])[0];
-    });
+  return (
+    seededShuffle(
+      `${variant}-${a.supervisorId}`
+    ) -
+    seededShuffle(
+      `${variant}-${b.supervisorId}`
+    )
+  );
+});
 
     // ========================================================
     // ⭐ DEBUG
@@ -3174,35 +3212,39 @@ async function generatePlan(
       0
     ) {
       console.log(
-        "⭐ PERIOD CONTINUITY PRIORITY:",
-        {
-          professor:
-            professor.professor,
+  "🏆 SELECTED SUPERVISOR:",
+  {
+    professor:
+      professor.professor,
 
-          supervisor:
-            ranked[0].supervisorId,
+    supervisor:
+      ranked[0].supervisorId,
 
-          continuityPriority:
-            ranked[0]
-              .continuityPriority,
+    quota:
+      ranked[0].quota,
 
-          periodContinuityScore:
-            ranked[0]
-              .periodContinuityScore,
+    currentTotal:
+      ranked[0].currentTotal,
 
-          consecutiveScore:
-            ranked[0]
-              .consecutiveScore,
+    projectedTotal:
+      ranked[0].projectedTotal,
 
-          currentTotal:
-            ranked[0]
-              .currentTotal,
+    quotaDistance:
+      ranked[0].quotaDistance,
 
-          projectedTotal:
-            ranked[0]
-              .projectedTotal,
-        }
-      );
+    periodContinuityScore:
+      ranked[0].periodContinuityScore,
+
+    continuityPriority:
+      ranked[0].continuityPriority,
+
+    consecutiveScore:
+      ranked[0].consecutiveScore,
+
+    dailyLoad:
+      ranked[0].dailyLoad,
+  }
+);
     }
 
     // ========================================================

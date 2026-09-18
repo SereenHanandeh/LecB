@@ -77,11 +77,6 @@ async function createPlan(req, res) {
     return handleError(res, err, "Error creating plan");
   }
 }
-
-// =====================================================
-// Set Duty Pool
-// =====================================================
-
 // =====================================================
 // Set Duty Pool
 // =====================================================
@@ -170,12 +165,27 @@ async function setDutyPool(req, res) {
 // Set Period Quotas
 // =====================================================
 
+// =====================================================
+// Set Period Quotas
+// =====================================================
+
 async function setPeriodQuotas(req, res) {
   try {
     const { planId } = req.params;
     const { supervisors } = req.body;
 
-    // planId هو UUID
+    console.log("========================================");
+    console.log("🎯 SET PERIOD QUOTAS");
+    console.log("📌 planId:", planId);
+    console.log("📌 supervisors received:", supervisors);
+    console.log(
+      "📌 supervisors type:",
+      Array.isArray(supervisors)
+        ? "array"
+        : typeof supervisors
+    );
+    console.log("========================================");
+
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -183,49 +193,83 @@ async function setPeriodQuotas(req, res) {
       });
     }
 
-    if (
-      !supervisors ||
-      typeof supervisors !== "object" ||
-      Array.isArray(supervisors)
-    ) {
+    // Frontend sends an ARRAY
+    if (!Array.isArray(supervisors)) {
       return res.status(400).json({
         success: false,
-        error: "supervisors must be an object",
+        error:
+          "supervisors must be an array",
       });
     }
 
-    const normalized = {};
+    const normalized = [];
 
-    for (const [supervisorId, targetPeriods] of Object.entries(supervisors)) {
-      const sid = Number(supervisorId);
+    for (const item of supervisors) {
+      const sid = Number(
+        item.supervisorId ??
+        item.supervisor_id
+      );
 
-      const target = Number(targetPeriods);
+      const target = Number(
+        item.quota ??
+        item.targetPeriods ??
+        item.target_periods
+      );
 
       if (!Number.isInteger(sid)) {
-        continue;
-      }
-
-      if (!Number.isInteger(target) || target <= 0) {
         return res.status(400).json({
           success: false,
-          error: `Invalid period quota for supervisor ${sid}`,
+          error:
+            `Invalid supervisor ID: ${item.supervisorId}`,
         });
       }
 
-      normalized[sid] = target;
+      if (
+        !Number.isInteger(target) ||
+        target <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            `Invalid period quota for supervisor ${sid}`,
+        });
+      }
+
+      normalized.push({
+        supervisorId: sid,
+        quota: target,
+      });
     }
 
-    await savePeriodQuotas(planId, normalized);
+    console.log(
+      "🎯 NORMALIZED QUOTAS:",
+      normalized
+    );
+
+    const saved =
+      await savePeriodQuotas(
+        planId,
+        normalized
+      );
+
+    console.log(
+      "✅ SAVED QUOTAS:",
+      saved
+    );
 
     return res.json({
       success: true,
-      message: "Period quotas saved successfully",
-      data: {
-        supervisors: normalized,
-      },
+      message:
+        "Period quotas saved successfully",
+      data: saved,
     });
+
   } catch (err) {
-    return handleError(res, err, "Error saving period quotas");
+    return handleError(
+      res,
+      err,
+      "Error saving period quotas"
+    );
   }
 }
 
