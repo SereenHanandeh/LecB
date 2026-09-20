@@ -2161,11 +2161,7 @@ function swapProfessorsBetweenSupervisors({
   minimumTarget,
   variant,
 }) {
-  console.log("========================================");
-
   console.log("🔄 STARTING SWAP REBALANCE ENGINE");
-
-  console.log("========================================");
 
   let metrics = calculateRebalanceMetrics(
     cand,
@@ -2299,22 +2295,6 @@ function swapProfessorsBetweenSupervisors({
             if (forcedProfessorAssignments.has(professorB.key)) {
               continue;
             }
-
-            // ------------------------------------------------
-            // Quick feasibility check
-            // ------------------------------------------------
-            //
-            // We temporarily remove BOTH professors.
-            // Then test:
-            //
-            // A -> B supervisor
-            // B -> A supervisor
-            //
-            // This is important because checking against
-            // the current state could incorrectly reject
-            // a valid swap due to the other professor
-            // still occupying the supervisor.
-            // ------------------------------------------------
 
             const snapshot = snapshotState(
               cand,
@@ -2543,10 +2523,30 @@ function swapProfessorsBetweenSupervisors({
 
     const professorB = bestSwap.professorB;
 
-    // Remove both
+    // ========================================================
+    // IMPORTANT:
+    // Take a snapshot BEFORE changing the real state.
+    // If A succeeds but B fails, we restore EVERYTHING.
+    // ========================================================
+
+    const finalSwapSnapshot = snapshotState(
+      cand,
+      result,
+      bundleAssignments,
+      professorAssignments,
+    );
+
+    // --------------------------------------------------------
+    // Remove both professors
+    // --------------------------------------------------------
+
     removeProfessor(professorA);
 
     removeProfessor(professorB);
+
+    // --------------------------------------------------------
+    // Rebuild clean state
+    // --------------------------------------------------------
 
     rebuildCandidateState(
       cand,
@@ -2557,7 +2557,10 @@ function swapProfessorsBetweenSupervisors({
       result,
     );
 
-    // Assign A -> B supervisor
+    // --------------------------------------------------------
+    // Assign Professor A -> Professor B's supervisor
+    // --------------------------------------------------------
+
     const assignedA = assignProfessorToSupervisor(
       professorA.key,
       professorA.bundles,
@@ -2570,13 +2573,33 @@ function swapProfessorsBetweenSupervisors({
 
     if (!assignedA) {
       console.warn(
-        "⚠️ Permanent swap failed while assigning Professor A. Stopping swap engine.",
+        "⚠️ Permanent swap failed while assigning Professor A. Restoring previous state.",
+      );
+
+      restoreState(
+        finalSwapSnapshot,
+        cand,
+        result,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+      rebuildCandidateState(
+        cand,
+        bundles,
+        professorGroups,
+        bundleAssignments,
+        professorAssignments,
+        result,
       );
 
       break;
     }
 
-    // Assign B -> A supervisor
+    // --------------------------------------------------------
+    // Assign Professor B -> Professor A's supervisor
+    // --------------------------------------------------------
+
     const assignedB = assignProfessorToSupervisor(
       professorB.key,
       professorB.bundles,
@@ -2592,9 +2615,24 @@ function swapProfessorsBetweenSupervisors({
         "⚠️ Permanent swap failed while assigning Professor B. Restoring previous state.",
       );
 
-      // إعادة بناء من snapshot غير متاحة هنا،
-      // لذلك نوقف قبل حفظ الحالة غير المكتملة.
-      throw new Error("Swap Rebalance Engine failed to apply a valid swap.");
+      restoreState(
+        finalSwapSnapshot,
+        cand,
+        result,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+      rebuildCandidateState(
+        cand,
+        bundles,
+        professorGroups,
+        bundleAssignments,
+        professorAssignments,
+        result,
+      );
+
+      break;
     }
 
     // --------------------------------------------------------
@@ -3522,29 +3560,558 @@ async function generatePlan(
 
   const rebalanceResult = rebalanceAssignments({
     cand,
-
     selectedSupervisorIds,
-
     professorGroups,
-
     bundles,
-
     result,
-
     bundleAssignments,
-
     professorAssignments,
-
     forcedProfessorAssignments,
-
     minimumEnabled,
-
     minimumTarget,
-
     variant,
   });
 
   console.log("🔄 Rebalance result:", rebalanceResult);
+
+  // =====================================================
+  // 🎯 MINIMUM REBALANCE ENGINE
+  // =====================================================
+
+  console.log("🔥🔥🔥 MINIMUM REBALANCE TEST MARKER 🔥🔥🔥");
+
+  const minimumRebalanceResult = minimumRebalanceAssignments({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+    variant,
+  });
+
+  console.log("🎯 Minimum Rebalance result:", minimumRebalanceResult);
+
+  // =====================================================
+  // 🎯 MINIMUM REBALANCE ENGINE
+
+  function minimumRebalanceAssignments({
+    cand,
+    result,
+    bundles,
+    professorGroups,
+    selectedSupervisorIds,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+  }) {
+    if (!minimumEnabled) {
+      console.log("🎯 Minimum Rebalance Engine skipped — rule disabled.");
+
+      return {
+        moves: 0,
+        iterations: 0,
+      };
+    }
+
+    console.log("");
+    console.log("========================================");
+    console.log("🎯 STARTING MINIMUM REBALANCE ENGINE");
+    console.log("========================================");
+    console.log(`🎯 Minimum target: ${minimumTarget}`);
+
+    rebuildCandidateState(
+      cand,
+      bundles,
+      professorGroups,
+      bundleAssignments,
+      professorAssignments,
+      result,
+    );
+
+    let currentMetrics = calculateRebalanceMetrics(
+      cand,
+      selectedSupervisorIds,
+      true,
+      minimumTarget,
+    );
+
+    console.log("📊 Minimum Rebalance starting metrics:", currentMetrics);
+
+    let moves = 0;
+    let iterations = 0;
+
+    const maxIterations = Math.max(
+      10,
+      professorGroups.length * selectedSupervisorIds.length * 3,
+    );
+
+    while (iterations < maxIterations) {
+      iterations++;
+
+      // -------------------------------------------------
+      // المشرفين الذين ما وصلوا للـ Minimum
+      // -------------------------------------------------
+
+      const deficitSupervisors = selectedSupervisorIds
+        .map((id) => cand[id])
+        .filter((sup) => sup && Number(sup.total || 0) < minimumTarget)
+        .sort((a, b) => {
+          return Number(a.total || 0) - Number(b.total || 0);
+        });
+
+      if (deficitSupervisors.length === 0) {
+        console.log("✅ All supervisors reached the minimum target.");
+
+        break;
+      }
+
+      let bestMove = null;
+      let bestMetrics = null;
+
+      // -------------------------------------------------
+      // نبدأ بالأكثر احتياجًا
+      // -------------------------------------------------
+
+      for (const targetBefore of deficitSupervisors) {
+        const targetId = Number(targetBefore.id);
+
+        // -------------------------------------------------
+        // نأخذ Professors من المشرفين الأثقل
+        // -------------------------------------------------
+
+        const sourceSupervisors = selectedSupervisorIds
+          .map((id) => cand[id])
+          .filter(
+            (sup) =>
+              sup &&
+              Number(sup.id) !== targetId &&
+              Number(sup.total || 0) > Number(targetBefore.total || 0),
+          )
+          .sort((a, b) => {
+            return Number(b.total || 0) - Number(a.total || 0);
+          });
+
+        for (const sourceBefore of sourceSupervisors) {
+          const sourceId = Number(sourceBefore.id);
+
+          const sourceProfessors = professorGroups
+            .filter((professor) => {
+              const assignedSupervisor = professorAssignments.get(
+                Number(professor.professorId),
+              );
+
+              return Number(assignedSupervisor) === sourceId;
+            })
+            .filter((professor) => {
+              // لا ننقل Professor إجباري
+              return !forcedProfessorAssignments.has(
+                Number(professor.professorId),
+              );
+            })
+            .sort((a, b) => {
+              // نفضل Professor أصغر أولًا حتى لا ننقل
+              // حملًا ضخمًا ونزيد عدم التوازن.
+              return (
+                Number(a.bundles?.length || 0) - Number(b.bundles?.length || 0)
+              );
+            });
+
+          for (const professor of sourceProfessors) {
+            const professorId = Number(professor.professorId);
+
+            const professorBundles = professor.bundles || [];
+
+            if (!professorBundles.length) {
+              continue;
+            }
+
+            // -------------------------------------------------
+            // Snapshot قبل تجربة النقل
+            // -------------------------------------------------
+
+            const trialSnapshot = snapshotState(
+              cand,
+              result,
+              bundleAssignments,
+              professorAssignments,
+            );
+
+            try {
+              // -------------------------------------------------
+              // إزالة Professor كامل من المصدر
+              // -------------------------------------------------
+
+              for (const bundle of professorBundles) {
+                const bundleKey =
+                  bundle.bundleKey ||
+                  bundle.key ||
+                  `${bundle.professorId}|${bundle.date}|${bundle.period}`;
+
+                bundleAssignments.delete(bundleKey);
+
+                const resultIndex = result.findIndex(
+                  (row) =>
+                    Number(row.sessionGroupId ?? row.session_group_id) ===
+                    Number(bundle.sessionGroupId),
+                );
+
+                if (resultIndex !== -1) {
+                  result.splice(resultIndex, 1);
+                }
+              }
+
+              professorAssignments.delete(professorId);
+
+              // -------------------------------------------------
+              // إعادة بناء الحالة
+              // -------------------------------------------------
+
+              rebuildCandidateState(
+                cand,
+                bundles,
+                professorGroups,
+                bundleAssignments,
+                professorAssignments,
+                result,
+              );
+
+              const targetAfterRemoval = cand[targetId];
+
+              if (!targetAfterRemoval) {
+                restoreState(
+                  trialSnapshot,
+                  cand,
+                  result,
+                  bundleAssignments,
+                  professorAssignments,
+                );
+
+                rebuildCandidateState(
+                  cand,
+                  bundles,
+                  professorGroups,
+                  bundleAssignments,
+                  professorAssignments,
+                  result,
+                );
+
+                continue;
+              }
+
+              // -------------------------------------------------
+              // فحص جميع Hard Rules
+              // -------------------------------------------------
+
+              const canTake = canSupervisorTakeProfessor(
+                targetAfterRemoval,
+                professorBundles,
+              );
+
+              if (!canTake) {
+                restoreState(
+                  trialSnapshot,
+                  cand,
+                  result,
+                  bundleAssignments,
+                  professorAssignments,
+                );
+
+                rebuildCandidateState(
+                  cand,
+                  bundles,
+                  professorGroups,
+                  bundleAssignments,
+                  professorAssignments,
+                  result,
+                );
+
+                continue;
+              }
+
+              // -------------------------------------------------
+              // محاولة إعطاء Professor كامل للـ Target
+              // -------------------------------------------------
+
+              assignProfessorToSupervisor(
+                professor,
+                targetAfterRemoval,
+                professorBundles,
+                bundleAssignments,
+                professorAssignments,
+                result,
+              );
+
+              // -------------------------------------------------
+              // إعادة البناء بعد النقل
+              // -------------------------------------------------
+
+              rebuildCandidateState(
+                cand,
+                bundles,
+                professorGroups,
+                bundleAssignments,
+                professorAssignments,
+                result,
+              );
+
+              const candidateMetrics = calculateRebalanceMetrics(
+                cand,
+                selectedSupervisorIds,
+                true,
+                minimumTarget,
+              );
+
+              // -------------------------------------------------
+              // يجب أن يكون النقل مفيدًا فعلًا
+              // -------------------------------------------------
+
+              const comparison = compareRebalanceMetrics(
+                candidateMetrics,
+                currentMetrics,
+                true,
+              );
+
+              if (comparison < 0) {
+                if (
+                  !bestMetrics ||
+                  compareRebalanceMetrics(candidateMetrics, bestMetrics, true) <
+                    0
+                ) {
+                  bestMetrics = candidateMetrics;
+
+                  bestMove = {
+                    professor,
+                    professorId,
+                    sourceId,
+                    targetId,
+                    bundleCount: professorBundles.length,
+                  };
+                }
+              }
+            } catch (error) {
+              console.warn("⚠️ Minimum Rebalance trial failed:", error.message);
+            }
+
+            // -------------------------------------------------
+            // نرجع للحالة الأصلية بعد كل Trial
+            // -------------------------------------------------
+
+            restoreState(
+              trialSnapshot,
+              cand,
+              result,
+              bundleAssignments,
+              professorAssignments,
+            );
+
+            rebuildCandidateState(
+              cand,
+              bundles,
+              professorGroups,
+              bundleAssignments,
+              professorAssignments,
+              result,
+            );
+          }
+        }
+
+        // إذا وجدنا أفضل Move لهذا target
+        // لا نحتاج تجربة Targets أضعف منه.
+        if (bestMove) {
+          break;
+        }
+      }
+
+      // -------------------------------------------------
+      // لا يوجد Move قانوني يحسن Minimum
+      // -------------------------------------------------
+
+      if (!bestMove) {
+        console.log("⚠️ No legal minimum-improving move found.");
+
+        break;
+      }
+
+      // -------------------------------------------------
+      // تطبيق أفضل Move بشكل دائم
+      // -------------------------------------------------
+
+      console.log("");
+      console.log("🎯 Applying Minimum Rebalance Move:");
+      console.log(`👨‍🏫 Professor: ${bestMove.professorId}`);
+      console.log(`⬅️ From Supervisor: ${bestMove.sourceId}`);
+      console.log(`➡️ To Supervisor: ${bestMove.targetId}`);
+      console.log(`📦 Bundles moved: ${bestMove.bundleCount}`);
+
+      const finalSnapshot = snapshotState(
+        cand,
+        result,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+      try {
+        const professor = bestMove.professor;
+
+        const professorBundles = professor.bundles || [];
+
+        // إزالة Professor كامل
+        for (const bundle of professorBundles) {
+          const bundleKey =
+            bundle.bundleKey ||
+            bundle.key ||
+            `${bundle.professorId}|${bundle.date}|${bundle.period}`;
+
+          bundleAssignments.delete(bundleKey);
+
+          const resultIndex = result.findIndex(
+            (row) =>
+              Number(row.sessionGroupId ?? row.session_group_id) ===
+              Number(bundle.sessionGroupId),
+          );
+
+          if (resultIndex !== -1) {
+            result.splice(resultIndex, 1);
+          }
+        }
+
+        professorAssignments.delete(bestMove.professorId);
+
+        rebuildCandidateState(
+          cand,
+          bundles,
+          professorGroups,
+          bundleAssignments,
+          professorAssignments,
+          result,
+        );
+
+        const target = cand[bestMove.targetId];
+
+        const canTake = canSupervisorTakeProfessor(target, professorBundles);
+
+        if (!canTake) {
+          throw new Error("Final minimum move violates a hard rule.");
+        }
+
+        assignProfessorToSupervisor(
+          professor,
+          target,
+          professorBundles,
+          bundleAssignments,
+          professorAssignments,
+          result,
+        );
+
+        rebuildCandidateState(
+          cand,
+          bundles,
+          professorGroups,
+          bundleAssignments,
+          professorAssignments,
+          result,
+        );
+
+        currentMetrics = calculateRebalanceMetrics(
+          cand,
+          selectedSupervisorIds,
+          true,
+          minimumTarget,
+        );
+
+        moves++;
+
+        console.log("✅ Minimum Rebalance Move Applied.");
+
+        console.log("📊 New metrics:", currentMetrics);
+      } catch (error) {
+        console.error(
+          "❌ Minimum Rebalance permanent move failed:",
+          error.message,
+        );
+
+        // مهم جدًا:
+        // إذا فشل التطبيق النهائي نرجع كل شيء كما كان.
+        restoreState(
+          finalSnapshot,
+          cand,
+          result,
+          bundleAssignments,
+          professorAssignments,
+        );
+
+        rebuildCandidateState(
+          cand,
+          bundles,
+          professorGroups,
+          bundleAssignments,
+          professorAssignments,
+          result,
+        );
+
+        console.log("↩️ Minimum Rebalance state restored.");
+
+        break;
+      }
+    }
+
+    // -------------------------------------------------
+    // Final rebuild
+    // -------------------------------------------------
+
+    rebuildCandidateState(
+      cand,
+      bundles,
+      professorGroups,
+      bundleAssignments,
+      professorAssignments,
+      result,
+    );
+
+    const finalMetrics = calculateRebalanceMetrics(
+      cand,
+      selectedSupervisorIds,
+      true,
+      minimumTarget,
+    );
+
+    console.log("");
+    console.log("========================================");
+    console.log("🎯 MINIMUM REBALANCE ENGINE FINISHED");
+    console.log("========================================");
+    console.log(`🔄 Moves: ${moves}`);
+    console.log(`🔁 Iterations: ${iterations}`);
+    console.log("📊 Final metrics:", finalMetrics);
+
+    const remainingDeficit = selectedSupervisorIds
+      .map((id) => cand[id])
+      .filter((sup) => sup && Number(sup.total || 0) < minimumTarget)
+      .map((sup) => ({
+        supervisorId: Number(sup.id),
+        total: Number(sup.total || 0),
+        deficit: minimumTarget - Number(sup.total || 0),
+      }));
+
+    if (remainingDeficit.length) {
+      console.log("⚠️ Minimum could not be reached for:", remainingDeficit);
+    } else {
+      console.log("✅ Minimum target reached for all supervisors.");
+    }
+
+    return {
+      moves,
+      iterations,
+      finalMetrics,
+      remainingDeficit,
+    };
+  }
 
   // ==========================================================
   // Swap Rebalance
@@ -3918,6 +4485,12 @@ async function generatePlan(
     rebalanceMoves: rebalanceResult.totalMoves,
 
     rebalanceIterations: rebalanceResult.iterations,
+
+    minimumRebalanceMoves: minimumRebalanceResult.moves,
+
+    minimumRebalanceIterations: minimumRebalanceResult.iterations,
+
+    minimumRebalanceRemainingDeficit: minimumRebalanceResult.remainingDeficit,
 
     swapMoves: swapRebalanceResult.totalSwaps,
 
