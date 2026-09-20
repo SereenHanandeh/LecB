@@ -769,65 +769,7 @@ function getProfessorConsecutiveScore(supervisor, professorBundles) {
 }
 
 // ============================================================
-// ⭐ Period Continuity Score - UPDATED
-// ============================================================
-//
-// الهدف:
-//
-// نعطي الأولوية للمشرف الذي:
-//
-// 1. يكمل فترة بجانب فترة موجودة.
-// 2. يغلق Gap موجود.
-// 3. يزيد طول السلسلة المتصلة.
-// 4. لا يفتح Gap جديد.
-// 5. يحافظ قدر الإمكان على الفترات متجاورة.
-//
-// مثال:
-//
-// الموجود:
-// 1,2
-//
-// المرشح:
-// 3
-//
-// يصبح:
-// 1,2,3
-//
-// => أولوية قوية جداً
-//
-// ------------------------------------------------------------
-//
-// الموجود:
-//
-// 1,2,4
-//
-// المرشح:
-//
-// 3
-//
-// يصبح:
-//
-// 1,2,3,4
-//
-// => أقوى حالة لأنها أغلقت Gap.
-//
-// ------------------------------------------------------------
-//
-// الموجود:
-//
-// 1,2
-//
-// المرشح:
-//
-// 4
-//
-// يصبح:
-//
-// 1,2,4
-//
-// => لا نريد هذا إذا كان هناك مشرف آخر يستطيع أخذ 4
-// بدون تكوين Gap.
-//
+// Period Continuity Score
 // ============================================================
 
 function getPeriodContinuityScore(supervisor, professorBundles) {
@@ -955,14 +897,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
     // ========================================================
     // 1. إغلاق Gap كامل
     // ========================================================
-    //
-    // مثال:
-    //
-    // 1,2,4 + 3
-    //
-    // هذه أقوى حالة.
-    //
-    // ========================================================
 
     for (const rank of candidateRanks) {
       const fillsGap =
@@ -995,9 +929,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 
     // ========================================================
     // 4. إكمال الفترة السابقة مباشرة
-    //
-    // 1,2 + 3
-    //
     // ========================================================
 
     for (const rank of candidateRanks) {
@@ -1008,9 +939,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 
     // ========================================================
     // 5. إكمال الفترة التالية مباشرة
-    //
-    // 3 + 4
-    //
     // ========================================================
 
     for (const rank of candidateRanks) {
@@ -1021,17 +949,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 
     // ========================================================
     // 6. ربط سلسلتين
-    //
-    // مثال:
-    //
-    // 1,2 + 4,5
-    //
-    // والمرشح 3
-    //
-    // يصبح:
-    //
-    // 1,2,3,4,5
-    //
     // ========================================================
 
     for (const rank of candidateRanks) {
@@ -1045,14 +962,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 
     // ========================================================
     // 7. إكمال سلسلة طويلة
-    //
-    // إذا المشرف عنده:
-    //
-    // 1,2
-    //
-    // والمرشح 3
-    //
-    // نعطي bonus إضافي.
     // ========================================================
 
     for (const rank of candidateRanks) {
@@ -1087,16 +996,6 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 
     // ========================================================
     // 10. عقوبة تكوين Gap جديد
-    //
-    // مثال:
-    //
-    // الموجود 1,2
-    // المرشح 4
-    //
-    // النتيجة 1,2,4
-    //
-    // Gap جديد = 1
-    //
     // ========================================================
 
     const newGaps = afterGaps - beforeGaps;
@@ -1118,13 +1017,7 @@ function getPeriodContinuityScore(supervisor, professorBundles) {
 }
 
 // ============================================================
-// ⭐ Continuity Priority
-// ============================================================
-//
-// نحافظ على الدالة السابقة حتى ما نكسر أي منطق آخر.
-//
-// لكنها الآن تعتمد على الـ Period Continuity الأقوى.
-//
+// Continuity Priority
 // ============================================================
 
 function getContinuityPriority(supervisor, professorBundles) {
@@ -1155,6 +1048,80 @@ function getProfessorDailyLoad(supervisor, professorBundles) {
   }
 
   return dailyLoad;
+}
+
+// ============================================================
+// Minimum Period Helpers
+// ============================================================
+
+// هل وصل كل المشرفين للحد الأدنى؟
+function hasReachedAllMinimums(
+  cand,
+  selectedSupervisorIds,
+  minimumPeriodsEnabled,
+  minimumPeriods,
+) {
+  if (!minimumPeriodsEnabled) {
+    return true;
+  }
+
+  for (const supervisorId of selectedSupervisorIds) {
+    const supervisor = cand[Number(supervisorId)];
+
+    if (!supervisor) {
+      continue;
+    }
+
+    if (Number(supervisor.total || 0) < minimumPeriods) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// معلومات الحد الأدنى للمشرف
+function getMinimumInfo(
+  supervisor,
+  workload,
+  minimumPeriodsEnabled,
+  minimumPeriods,
+) {
+  const currentTotal = Number(supervisor.total || 0);
+
+  const projectedTotal = currentTotal + workload;
+
+  if (!minimumPeriodsEnabled) {
+    return {
+      needsMinimum: false,
+      deficit: 0,
+      projectedDeficit: 0,
+      reachesMinimum: false,
+    };
+  }
+
+  const deficit = Math.max(0, minimumPeriods - currentTotal);
+
+  const projectedDeficit = Math.max(
+    0,
+    minimumPeriods - projectedTotal,
+  );
+
+  const needsMinimum = currentTotal < minimumPeriods;
+
+  const reachesMinimum =
+    currentTotal < minimumPeriods &&
+    projectedTotal >= minimumPeriods;
+
+  return {
+    needsMinimum,
+
+    deficit,
+
+    projectedDeficit,
+
+    reachesMinimum,
+  };
 }
 
 // ============================================================
@@ -1287,95 +1254,81 @@ function assignProfessorToSupervisor(
 }
 
 // ============================================================
-// Quota Map
-// ============================================================
-
-function buildQuotaMap(periodQuotas = []) {
-  const quotaMap = new Map();
-
-  for (const item of periodQuotas) {
-    const supervisorId = Number(item.supervisor_id);
-
-    const target = Number(item.target_periods);
-
-    if (!Number.isFinite(supervisorId)) {
-      continue;
-    }
-
-    if (!Number.isInteger(target) || target <= 0) {
-      continue;
-    }
-
-    quotaMap.set(supervisorId, target);
-  }
-
-  return quotaMap;
-}
-
-// ============================================================
-// Quota Score
-// ============================================================
-
-function getQuotaScore(
-  supervisor,
-  workload,
-  target,
-  globalMinimumReached = false,
-) {
-  const current = Number(supervisor.total || 0);
-
-  const projected = current + workload;
-
-  // ما عنده Target
-  if (target === null || target === undefined) {
-    return {
-      score: 0,
-      projected,
-      distance: 0,
-      deficit: 0,
-      belowTarget: false,
-    };
-  }
-
-  const deficit = Math.max(0, target - current);
-
-  const projectedDeficit = Math.max(0, target - projected);
-
-  const belowTarget = current < target;
-
-  let score = 0;
-
-  if (!globalMinimumReached) {
-    if (belowTarget) {
-      score += 1000000;
-
-      score += deficit * 10000;
-
-      score += (deficit - projectedDeficit) * 5000;
-    } else {
-      score -= 500000;
-    }
-  }
-
-  return {
-    score,
-
-    projected,
-
-    distance: Math.abs(target - projected),
-
-    deficit,
-
-    belowTarget,
-  };
-}
-
-// ============================================================
 // Generate Plan
 // ============================================================
+//
+// minimumPeriodsEnabled:
+//   false = تجاهل الحد الأدنى
+//   true  = كل Supervisor أقل من minimumPeriods له أولوية
+//
+// minimumPeriods:
+//   القيمة الافتراضية = 4
+//
+// يدعم:
+// generatePlan(planId, variant, true, 4)
+//
+// أو:
+// generatePlan(planId, variant, {
+//   minimumPeriodsEnabled: true,
+//   minimumPeriods: 4
+// })
+//
+// ============================================================
 
-async function generatePlan(planId, variant = 1) {
+async function generatePlan(
+  planId,
+  variant = 1,
+  minimumPeriodsEnabled = false,
+  minimumPeriods = 4,
+) {
+  // ----------------------------------------------------------
+  // دعم إرسال الخيارات كـ Object
+  // ----------------------------------------------------------
+
+  if (
+    minimumPeriodsEnabled &&
+    typeof minimumPeriodsEnabled === "object"
+  ) {
+    const options = minimumPeriodsEnabled;
+
+    minimumPeriodsEnabled = Boolean(
+      options.minimumPeriodsEnabled ??
+        options.enabled ??
+        false,
+    );
+
+    minimumPeriods = Number(
+      options.minimumPeriods ??
+        options.minimum ??
+        4,
+    );
+  }
+
+  // ----------------------------------------------------------
+  // Normalize Minimum Settings
+  // ----------------------------------------------------------
+
+  const minimumEnabled = Boolean(minimumPeriodsEnabled);
+
+  let minimumTarget = Number(minimumPeriods);
+
+  if (!Number.isInteger(minimumTarget) || minimumTarget < 1) {
+    minimumTarget = 4;
+  }
+
+  console.log("========================================");
   console.log(`🚀 Generating plan ${planId}, variant ${variant}`);
+  console.log("========================================");
+
+  console.log(
+    "⚙️ Minimum periods enabled:",
+    minimumEnabled,
+  );
+
+  console.log(
+    "⚙️ Minimum periods target:",
+    minimumTarget,
+  );
 
   // بنجيب بيانات الخطة
   const ctx = await getPlanContext(planId);
@@ -1390,7 +1343,6 @@ async function generatePlan(planId, variant = 1) {
     pre = [],
     locks = [],
     aff = [],
-    periodQuotas = [],
   } = ctx;
 
   console.log("========================================");
@@ -1433,6 +1385,12 @@ async function generatePlan(planId, variant = 1) {
       total: 0,
       conflicts: [],
       supervisorsUsed: 0,
+
+      minimumPeriodsEnabled: minimumEnabled,
+
+      minimumPeriods: minimumEnabled ? minimumTarget : null,
+
+      minimumStatistics: [],
     };
   }
 
@@ -1470,7 +1428,9 @@ async function generatePlan(planId, variant = 1) {
   }
 
   // نشيل التكرار
-  selectedSupervisorIds = Array.from(new Set(selectedSupervisorIds));
+  selectedSupervisorIds = Array.from(
+    new Set(selectedSupervisorIds),
+  );
 
   console.log(
     `👥 Selected supervisors: ${selectedSupervisorIds.length}`,
@@ -1518,38 +1478,15 @@ async function generatePlan(planId, variant = 1) {
   }
 
   // ==========================================================
-  // Period Quotas
+  // Minimum Period Debug
   // ==========================================================
 
-  const quotaMap = buildQuotaMap(periodQuotas);
-
-  console.log("🎯 Period quotas:", Object.fromEntries(quotaMap));
-
-  function hasReachedAllQuotas(cand, selectedSupervisorIds, quotaMap) {
-    // ما في quotas
-    if (!quotaMap.size) {
-      return true;
-    }
-
-    for (const supervisorId of selectedSupervisorIds) {
-      const target = quotaMap.get(Number(supervisorId));
-
-      if (target === null || target === undefined) {
-        continue;
-      }
-
-      const supervisor = cand[Number(supervisorId)];
-
-      if (!supervisor) {
-        continue;
-      }
-
-      if (Number(supervisor.total || 0) < Number(target)) {
-        return false;
-      }
-    }
-
-    return true;
+  if (minimumEnabled) {
+    console.log(
+      `🎯 Minimum Period Rule ENABLED: Every selected supervisor should receive at least ${minimumTarget} periods when feasible.`,
+    );
+  } else {
+    console.log("🎯 Minimum Period Rule DISABLED.");
   }
 
   // ==========================================================
@@ -1583,10 +1520,15 @@ async function generatePlan(planId, variant = 1) {
   // ==========================================================
 
   for (const item of aff) {
-    const supervisorId = Number(item.supervisor_id ?? item.supervisorId);
+    const supervisorId = Number(
+      item.supervisor_id ?? item.supervisorId,
+    );
 
     if (!Number.isFinite(supervisorId)) {
-      console.warn("⚠️ Affinity skipped: invalid supervisor ID", item);
+      console.warn(
+        "⚠️ Affinity skipped: invalid supervisor ID",
+        item,
+      );
 
       continue;
     }
@@ -1603,13 +1545,18 @@ async function generatePlan(planId, variant = 1) {
       conflicts.push({
         type: "AFFINITY_SUPERVISOR_NOT_SELECTED",
 
-        professor: item.professor_name || item.name || "",
+        professor:
+          item.professor_name ||
+          item.name ||
+          "",
 
-        professor_id: item.professor_id ?? null,
+        professor_id:
+          item.professor_id ?? null,
 
         supervisor_id: supervisorId,
 
-        message: "The affinity supervisor is not in the selected Duty Pool.",
+        message:
+          "The affinity supervisor is not in the selected Duty Pool.",
       });
 
       continue;
@@ -1619,23 +1566,37 @@ async function generatePlan(planId, variant = 1) {
     // Professor ID
     // --------------------------------------------------------
 
-    const professorId = Number(item.professor_id ?? item.professorId ?? null);
+    const professorId = Number(
+      item.professor_id ??
+        item.professorId ??
+        null,
+    );
 
     if (Number.isFinite(professorId)) {
-      professorAffinity.set(professorId, supervisorId);
+      professorAffinity.set(
+        professorId,
+        supervisorId,
+      );
     }
 
     // --------------------------------------------------------
     // Professor Name
     // --------------------------------------------------------
 
-    const professorName = String(item.professor_name ?? item.name ?? "")
+    const professorName = String(
+      item.professor_name ??
+        item.name ??
+        "",
+    )
       .trim()
       .replace(/\s+/g, " ")
       .toLowerCase();
 
     if (professorName) {
-      professorNameAffinity.set(professorName, supervisorId);
+      professorNameAffinity.set(
+        professorName,
+        supervisorId,
+      );
     }
 
     console.log(
@@ -1643,9 +1604,13 @@ async function generatePlan(planId, variant = 1) {
     );
   }
 
-  console.log(`🔗 Professor ID affinities: ${professorAffinity.size}`);
+  console.log(
+    `🔗 Professor ID affinities: ${professorAffinity.size}`,
+  );
 
-  console.log(`🔗 Professor name affinities: ${professorNameAffinity.size}`);
+  console.log(
+    `🔗 Professor name affinities: ${professorNameAffinity.size}`,
+  );
 
   // ==========================================================
   // Build Bundles
@@ -1666,13 +1631,20 @@ async function generatePlan(planId, variant = 1) {
 
         professor_id: group.professor_id ?? null,
 
-        professor: group.professor_name || group.professor || "",
+        professor:
+          group.professor_name ||
+          group.professor ||
+          "",
 
-        professor_name: group.professor_name || group.professor || "",
+        professor_name:
+          group.professor_name ||
+          group.professor ||
+          "",
 
         professorKey: getProfessorKey(group),
 
-        professorNameKey: getProfessorNameKey(group),
+        professorNameKey:
+          getProfessorNameKey(group),
 
         groups: [],
       });
@@ -1681,11 +1653,17 @@ async function generatePlan(planId, variant = 1) {
     bundlesMap.get(key).groups.push(group);
   }
 
-  const bundles = Array.from(bundlesMap.values());
+  const bundles = Array.from(
+    bundlesMap.values(),
+  );
 
-  console.log(`📦 Total CRNs / groups: ${groups.length}`);
+  console.log(
+    `📦 Total CRNs / groups: ${groups.length}`,
+  );
 
-  console.log(`📦 Total Professor + Date + Period bundles: ${bundles.length}`);
+  console.log(
+    `📦 Total Professor + Date + Period bundles: ${bundles.length}`,
+  );
 
   // ==========================================================
   // Group Bundles By Professor
@@ -1700,20 +1678,27 @@ async function generatePlan(planId, variant = 1) {
       professorsMap.set(key, {
         key,
 
-        professor_id: bundle.professor_id,
+        professor_id:
+          bundle.professor_id,
 
-        professor: bundle.professor,
+        professor:
+          bundle.professor,
 
-        professorNameKey: bundle.professorNameKey,
+        professorNameKey:
+          bundle.professorNameKey,
 
         bundles: [],
       });
     }
 
-    professorsMap.get(key).bundles.push(bundle);
+    professorsMap
+      .get(key)
+      .bundles.push(bundle);
   }
 
-  const professorGroups = Array.from(professorsMap.values());
+  const professorGroups = Array.from(
+    professorsMap.values(),
+  );
 
   // ==========================================================
   // Sort Bundles
@@ -1721,13 +1706,18 @@ async function generatePlan(planId, variant = 1) {
 
   for (const professor of professorGroups) {
     professor.bundles.sort((a, b) => {
-      const dateCompare = String(a.date).localeCompare(String(b.date));
+      const dateCompare = String(a.date).localeCompare(
+        String(b.date),
+      );
 
       if (dateCompare !== 0) {
         return dateCompare;
       }
 
-      return sortPeriods(a.period, b.period);
+      return sortPeriods(
+        a.period,
+        b.period,
+      );
     });
   }
 
@@ -1736,14 +1726,25 @@ async function generatePlan(planId, variant = 1) {
   // ==========================================================
 
   professorGroups.sort((a, b) => {
-    if (b.bundles.length !== a.bundles.length) {
-      return b.bundles.length - a.bundles.length;
+    if (
+      b.bundles.length !==
+      a.bundles.length
+    ) {
+      return (
+        b.bundles.length -
+        a.bundles.length
+      );
     }
 
-    return String(a.professor).localeCompare(String(b.professor), "ar");
+    return String(a.professor).localeCompare(
+      String(b.professor),
+      "ar",
+    );
   });
 
-  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
+  console.log(
+    `👨‍🏫 Unique professors: ${professorGroups.length}`,
+  );
 
   // ==========================================================
   // Professor Assignments
@@ -1755,10 +1756,16 @@ async function generatePlan(planId, variant = 1) {
   // Forced Assignments
   // ==========================================================
 
-  const forcedProfessorAssignments = new Map();
+  const forcedProfessorAssignments =
+    new Map();
 
-  function registerForcedProfessor(group, supervisorId, source) {
-    const professorKey = getProfessorKey(group);
+  function registerForcedProfessor(
+    group,
+    supervisorId,
+    source,
+  ) {
+    const professorKey =
+      getProfessorKey(group);
 
     const id = Number(supervisorId);
 
@@ -1771,34 +1778,51 @@ async function generatePlan(planId, variant = 1) {
       conflicts.push({
         type: "SUPERVISOR_NOT_SELECTED",
 
-        professor: group.professor_name || group.professor || "",
+        professor:
+          group.professor_name ||
+          group.professor ||
+          "",
 
-        professor_id: group.professor_id ?? null,
+        professor_id:
+          group.professor_id ?? null,
 
         supervisor_id: id,
 
         source,
 
-        message: "The required supervisor is not in the selected Duty Pool.",
+        message:
+          "The required supervisor is not in the selected Duty Pool.",
       });
 
       return;
     }
 
     // أول Forced assignment
-    if (!forcedProfessorAssignments.has(professorKey)) {
-      forcedProfessorAssignments.set(professorKey, {
-        supervisorId: id,
-        source,
-      });
+    if (
+      !forcedProfessorAssignments.has(
+        professorKey,
+      )
+    ) {
+      forcedProfessorAssignments.set(
+        professorKey,
+        {
+          supervisorId: id,
+          source,
+        },
+      );
 
       return;
     }
 
-    const existing = forcedProfessorAssignments.get(professorKey);
+    const existing =
+      forcedProfessorAssignments.get(
+        professorKey,
+      );
 
     // نفس المشرف
-    if (Number(existing.supervisorId) === id) {
+    if (
+      Number(existing.supervisorId) === id
+    ) {
       return;
     }
 
@@ -1806,11 +1830,16 @@ async function generatePlan(planId, variant = 1) {
     conflicts.push({
       type: "PROFESSOR_MULTIPLE_SUPERVISORS",
 
-      professor: group.professor_name || group.professor || "",
+      professor:
+        group.professor_name ||
+        group.professor ||
+        "",
 
-      professor_id: group.professor_id ?? null,
+      professor_id:
+        group.professor_id ?? null,
 
-      supervisor_1: existing.supervisorId,
+      supervisor_1:
+        existing.supervisorId,
 
       supervisor_2: id,
 
@@ -1823,21 +1852,40 @@ async function generatePlan(planId, variant = 1) {
   // ==========================================================
 
   for (const lock of locks) {
-    const sessionGroupId = Number(lock.session_group_id ?? lock.sessionGroupId);
+    const sessionGroupId = Number(
+      lock.session_group_id ??
+        lock.sessionGroupId,
+    );
 
-    const supervisorId = Number(lock.supervisor_id ?? lock.supervisorId);
+    const supervisorId = Number(
+      lock.supervisor_id ??
+        lock.supervisorId,
+    );
 
-    if (!Number.isFinite(sessionGroupId) || !Number.isFinite(supervisorId)) {
+    if (
+      !Number.isFinite(
+        sessionGroupId,
+      ) ||
+      !Number.isFinite(supervisorId)
+    ) {
       continue;
     }
 
-    const group = groups.find((g) => Number(g.id) === sessionGroupId);
+    const group = groups.find(
+      (g) =>
+        Number(g.id) ===
+        sessionGroupId,
+    );
 
     if (!group) {
       continue;
     }
 
-    registerForcedProfessor(group, supervisorId, "lock");
+    registerForcedProfessor(
+      group,
+      supervisorId,
+      "lock",
+    );
   }
 
   // ==========================================================
@@ -1845,21 +1893,40 @@ async function generatePlan(planId, variant = 1) {
   // ==========================================================
 
   for (const item of pre) {
-    const sessionGroupId = Number(item.session_group_id ?? item.sessionGroupId);
+    const sessionGroupId = Number(
+      item.session_group_id ??
+        item.sessionGroupId,
+    );
 
-    const supervisorId = Number(item.supervisor_id ?? item.supervisorId);
+    const supervisorId = Number(
+      item.supervisor_id ??
+        item.supervisorId,
+    );
 
-    if (!Number.isFinite(sessionGroupId) || !Number.isFinite(supervisorId)) {
+    if (
+      !Number.isFinite(
+        sessionGroupId,
+      ) ||
+      !Number.isFinite(supervisorId)
+    ) {
       continue;
     }
 
-    const group = groups.find((g) => Number(g.id) === sessionGroupId);
+    const group = groups.find(
+      (g) =>
+        Number(g.id) ===
+        sessionGroupId,
+    );
 
     if (!group) {
       continue;
     }
 
-    registerForcedProfessor(group, supervisorId, "preassignment");
+    registerForcedProfessor(
+      group,
+      supervisorId,
+      "preassignment",
+    );
   }
 
   // ==========================================================
@@ -1874,30 +1941,43 @@ async function generatePlan(planId, variant = 1) {
     // --------------------------------------------------------
 
     if (
-      professor.professor_id !== null &&
-      professor.professor_id !== undefined
+      professor.professor_id !==
+        null &&
+      professor.professor_id !==
+        undefined
     ) {
-      affinitySupervisor = professorAffinity.get(
-        Number(professor.professor_id),
-      );
+      affinitySupervisor =
+        professorAffinity.get(
+          Number(
+            professor.professor_id,
+          ),
+        );
     }
 
     // --------------------------------------------------------
     // 2. إذا ما لقيناه -> الاسم
     // --------------------------------------------------------
 
-    if (affinitySupervisor === null || affinitySupervisor === undefined) {
-      affinitySupervisor = professorNameAffinity.get(
-        professor.professorNameKey,
-      );
+    if (
+      affinitySupervisor === null ||
+      affinitySupervisor === undefined
+    ) {
+      affinitySupervisor =
+        professorNameAffinity.get(
+          professor.professorNameKey,
+        );
     }
 
     // --------------------------------------------------------
     // 3. وجدنا Affinity
     // --------------------------------------------------------
 
-    if (affinitySupervisor !== null && affinitySupervisor !== undefined) {
-      const supervisorId = Number(affinitySupervisor);
+    if (
+      affinitySupervisor !== null &&
+      affinitySupervisor !== undefined
+    ) {
+      const supervisorId =
+        Number(affinitySupervisor);
 
       console.log(
         `🎯 AFFINITY FOUND: Professor "${professor.professor}" -> Supervisor ${supervisorId}`,
@@ -1909,13 +1989,17 @@ async function generatePlan(planId, variant = 1) {
 
       if (!cand[supervisorId]) {
         conflicts.push({
-          type: "AFFINITY_SUPERVISOR_NOT_SELECTED",
+          type:
+            "AFFINITY_SUPERVISOR_NOT_SELECTED",
 
-          professor: professor.professor,
+          professor:
+            professor.professor,
 
-          professor_id: professor.professor_id,
+          professor_id:
+            professor.professor_id,
 
-          supervisor_id: supervisorId,
+          supervisor_id:
+            supervisorId,
 
           message:
             "The affinity supervisor is not part of the selected Duty Pool.",
@@ -1928,36 +2012,51 @@ async function generatePlan(planId, variant = 1) {
       // هل عنده Lock / Preassignment؟
       // ------------------------------------------------------
 
-      const forced = forcedProfessorAssignments.get(professor.key);
+      const forced =
+        forcedProfessorAssignments.get(
+          professor.key,
+        );
 
       // ------------------------------------------------------
       // تعارض
       // ------------------------------------------------------
 
-      if (forced && Number(forced.supervisorId) !== supervisorId) {
+      if (
+        forced &&
+        Number(forced.supervisorId) !==
+          supervisorId
+      ) {
         console.warn(
           `⚠️ Professor affinity conflicts with forced assignment: ${professor.professor}`,
         );
 
         conflicts.push({
-          type: "AFFINITY_FORCED_CONFLICT",
+          type:
+            "AFFINITY_FORCED_CONFLICT",
 
-          professor: professor.professor,
+          professor:
+            professor.professor,
 
-          professor_id: professor.professor_id,
+          professor_id:
+            professor.professor_id,
 
-          affinity_supervisor: supervisorId,
+          affinity_supervisor:
+            supervisorId,
 
-          forced_supervisor: forced.supervisorId,
+          forced_supervisor:
+            forced.supervisorId,
         });
 
         continue;
       }
 
-      forcedProfessorAssignments.set(professor.key, {
-        supervisorId,
-        source: "affinity",
-      });
+      forcedProfessorAssignments.set(
+        professor.key,
+        {
+          supervisorId,
+          source: "affinity",
+        },
+      );
 
       console.log(
         `🔒 Professor "${professor.professor}" FORCED to Supervisor ${supervisorId}`,
@@ -1970,47 +2069,61 @@ async function generatePlan(planId, variant = 1) {
   // ==========================================================
 
   for (const professor of professorGroups) {
-    const forced = forcedProfessorAssignments.get(professor.key);
+    const forced =
+      forcedProfessorAssignments.get(
+        professor.key,
+      );
 
     if (!forced) {
       continue;
     }
 
-    const supervisor = cand[Number(forced.supervisorId)];
+    const supervisor =
+      cand[
+        Number(forced.supervisorId)
+      ];
 
     if (!supervisor) {
       conflicts.push({
         type: "SUPERVISOR_NOT_FOUND",
 
-        professor: professor.professor,
+        professor:
+          professor.professor,
 
-        supervisor_id: forced.supervisorId,
+        supervisor_id:
+          forced.supervisorId,
       });
 
       continue;
     }
 
-    const ok = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      forced.supervisorId,
-      result,
-      cand,
-      bundleAssignments,
-      professorAssignments,
-    );
+    const ok =
+      assignProfessorToSupervisor(
+        professor.key,
+        professor.bundles,
+        forced.supervisorId,
+        result,
+        cand,
+        bundleAssignments,
+        professorAssignments,
+      );
 
     if (!ok) {
       conflicts.push({
-        type: "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
+        type:
+          "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
 
-        professor: professor.professor,
+        professor:
+          professor.professor,
 
-        professor_id: professor.professor_id,
+        professor_id:
+          professor.professor_id,
 
-        supervisor_id: forced.supervisorId,
+        supervisor_id:
+          forced.supervisorId,
 
-        periods: professor.bundles.length,
+        periods:
+          professor.bundles.length,
 
         message:
           "The professor cannot fit completely into the forced supervisor because of period conflicts.",
@@ -2022,7 +2135,11 @@ async function generatePlan(planId, variant = 1) {
   // Shuffle
   // ==========================================================
 
-  const shuffle = (arr) => seededShuffle([...arr], Number(variant) || 1);
+  const shuffle = (arr) =>
+    seededShuffle(
+      [...arr],
+      Number(variant) || 1,
+    );
 
   // ==========================================================
   // Remaining Professors
@@ -2030,140 +2147,163 @@ async function generatePlan(planId, variant = 1) {
 
   for (const professor of professorGroups) {
     // إذا موزع من قبل
-    if (professorAssignments.has(professor.key)) {
+    if (
+      professorAssignments.has(
+        professor.key,
+      )
+    ) {
       continue;
     }
 
-    // بنشوف إذا كل الـ quotas وصلت
-    const allQuotasReached = hasReachedAllQuotas(
-      cand,
-      selectedSupervisorIds,
-      quotaMap,
-    );
+    // --------------------------------------------------------
+    // هل كل المشرفين وصلوا للـ Minimum؟
+    // --------------------------------------------------------
+
+    const allMinimumsReached =
+      hasReachedAllMinimums(
+        cand,
+        selectedSupervisorIds,
+        minimumEnabled,
+        minimumTarget,
+      );
 
     const ranked = [];
 
-    // بنفحص كل المشرفين
+    // ========================================================
+    // نفحص كل المشرفين
+    // ========================================================
+
     for (const supervisorId of selectedSupervisorIds) {
-      const supervisor = cand[supervisorId];
+      const supervisor =
+        cand[supervisorId];
 
       if (!supervisor) {
         continue;
       }
 
       // الدكتور لازم يركب كامل عند المشرف
-      if (!canSupervisorTakeProfessor(supervisor, professor.bundles)) {
+      if (
+        !canSupervisorTakeProfessor(
+          supervisor,
+          professor.bundles,
+        )
+      ) {
         continue;
       }
 
-      const workload = professor.bundles.length;
+      const workload =
+        professor.bundles.length;
 
-      const currentTotal = Number(supervisor.total || 0);
+      const currentTotal =
+        Number(
+          supervisor.total || 0,
+        );
 
-      const projectedTotal = currentTotal + workload;
-
-      // Quota
-      const quota = quotaMap.has(supervisorId)
-        ? quotaMap.get(supervisorId)
-        : null;
-
-      const quotaInfo = getQuotaScore(
-        supervisor,
-        workload,
-        quota,
-        allQuotasReached,
-      );
+      const projectedTotal =
+        currentTotal + workload;
 
       // --------------------------------------------------------
-      // الفترات المتتالية القديمة
+      // Minimum Period Information
       // --------------------------------------------------------
 
-      const consecutiveScore = getProfessorConsecutiveScore(
-        supervisor,
-        professor.bundles,
-      );
+      const minimumInfo =
+        getMinimumInfo(
+          supervisor,
+          workload,
+          minimumEnabled,
+          minimumTarget,
+        );
 
       // --------------------------------------------------------
-      // ⭐ التعديل الرئيسي
-      //
-      // نحسب مدى اتصال الفترات بعد إضافة الدكتور
+      // الفترات المتتالية
       // --------------------------------------------------------
 
-      const periodContinuityScore = getPeriodContinuityScore(
-        supervisor,
-        professor.bundles,
-      );
+      const consecutiveScore =
+        getProfessorConsecutiveScore(
+          supervisor,
+          professor.bundles,
+        );
 
       // --------------------------------------------------------
-      // ⭐ الأولوية النهائية للاستمرارية
+      // Period Continuity
       // --------------------------------------------------------
 
-      const continuityPriority = getContinuityPriority(
-        supervisor,
-        professor.bundles,
-      );
+      const periodContinuityScore =
+        getPeriodContinuityScore(
+          supervisor,
+          professor.bundles,
+        );
 
+      // --------------------------------------------------------
+      // Continuity Priority
+      // --------------------------------------------------------
+
+      const continuityPriority =
+        getContinuityPriority(
+          supervisor,
+          professor.bundles,
+        );
+
+      // --------------------------------------------------------
       // ضغط المشرف خلال الأيام
-      const dailyLoad = getProfessorDailyLoad(supervisor, professor.bundles);
+      // --------------------------------------------------------
 
+      const dailyLoad =
+        getProfessorDailyLoad(
+          supervisor,
+          professor.bundles,
+        );
+
+      // --------------------------------------------------------
       // عدد الدكاترة عند المشرف
-      const professorCount = supervisor.assignedProfessors?.size || 0;
+      // --------------------------------------------------------
 
-      let score = 0;
+      const professorCount =
+        supervisor.assignedProfessors
+          ?.size || 0;
 
-      // ======================================================
-      // MODE 2: Quota
-      // ======================================================
+      // --------------------------------------------------------
+      // Score
+      // --------------------------------------------------------
 
-      if (quota !== null) {
-        const target = Number(quota);
+      const noProfessorYet =
+        professorCount === 0;
 
-        const currentDeficit = Math.max(0, target - currentTotal);
+      let score =
+        periodContinuityScore *
+          1000000 +
+        continuityPriority * 1000 +
+        (noProfessorYet
+          ? 100000000
+          : 0) -
+        projectedTotal * 10000 -
+        dailyLoad * 2;
 
-        const projectedDeficit = Math.max(0, target - projectedTotal);
+      // --------------------------------------------------------
+      // Minimum Bonus
+      // --------------------------------------------------------
+      //
+      // مهم:
+      // الـ sort تحت هو المسؤول الأساسي عن الـ Minimum.
+      //
+      // هذا الـ score فقط للمعلومات/debug.
+      //
 
-        const reachesTarget = currentTotal < target && projectedTotal >= target;
+      if (
+        minimumEnabled &&
+        minimumInfo.needsMinimum &&
+        !allMinimumsReached
+      ) {
+        score +=
+          1000000000 +
+          minimumInfo.deficit *
+            1000000;
 
-        score =
-          // ==================================================
-          // ⭐ الاستمرارية أولاً
-          // ==================================================
-
-          periodContinuityScore * 1000000 +
-          continuityPriority * 1000 +
-          // المشرف تحت الهدف
-          (currentTotal < target ? 100000000 : 0) +
-          // نقربه من الهدف
-          (currentDeficit - projectedDeficit) * 10000 +
-          // وصل الهدف
-          (reachesTarget ? 500000 : 0) -
-          // عقوبة التجاوز
-          Math.max(0, projectedTotal - target) * 1000 -
-          // Fairness
-          projectedTotal * 10 -
-          // ضغط اليوم
-          dailyLoad * 5;
-      }
-
-      // ======================================================
-      // MODE 1: Everyone
-      // ======================================================
-      else {
-        const noProfessorYet = professorCount === 0;
-
-        score =
-          // ==================================================
-          // ⭐ الاستمرارية أولاً
-          // ==================================================
-
-          periodContinuityScore * 1000000 +
-          continuityPriority * 1000 +
-          // كل مشرف يأخذ دكتور أول
-          (noProfessorYet ? 100000000 : 0) -
-          // نوازن مجموع الفترات
-          projectedTotal * 10000 -
-          // ضغط اليوم
-          dailyLoad * 2;
+        if (
+          minimumInfo.reachesMinimum
+        ) {
+          score += 50000000;
+        }
       }
 
       ranked.push({
@@ -2185,11 +2325,21 @@ async function generatePlan(planId, variant = 1) {
 
         professorCount,
 
-        quota,
+        minimumEnabled,
 
-        quotaScore: quotaInfo.score,
+        minimumTarget,
 
-        quotaDistance: quotaInfo.distance,
+        needsMinimum:
+          minimumInfo.needsMinimum,
+
+        minimumDeficit:
+          minimumInfo.deficit,
+
+        projectedMinimumDeficit:
+          minimumInfo.projectedDeficit,
+
+        reachesMinimum:
+          minimumInfo.reachesMinimum,
 
         score,
       });
@@ -2201,13 +2351,17 @@ async function generatePlan(planId, variant = 1) {
 
     if (!ranked.length) {
       conflicts.push({
-        type: "NO_SUPERVISOR_FOR_PROFESSOR",
+        type:
+          "NO_SUPERVISOR_FOR_PROFESSOR",
 
-        professor: professor.professor,
+        professor:
+          professor.professor,
 
-        professor_id: professor.professor_id,
+        professor_id:
+          professor.professor_id,
 
-        periods: professor.bundles.length,
+        periods:
+          professor.bundles.length,
 
         message:
           "No single supervisor can take all periods of this professor without a same-period conflict.",
@@ -2220,58 +2374,79 @@ async function generatePlan(planId, variant = 1) {
 
       continue;
     }
-    for (const item of ranked) {
-      if (item.quota !== null) {
-        item.quotaOvershoot = Math.max(
-          0,
-          item.projectedTotal - Number(item.quota),
-        );
-
-        item.quotaGapAfterAssignment = Math.abs(
-          Number(item.quota) - item.projectedTotal,
-        );
-      } else {
-        item.quotaOvershoot = 0;
-        item.quotaGapAfterAssignment = 0;
-      }
-    }
 
     // ========================================================
-    // ⭐ SORT SUPERVISORS
+    // SORT SUPERVISORS
     // ========================================================
+
     ranked.sort((a, b) => {
       // ======================================================
-      // 1. QUOTA TARGET
+      // 1. MINIMUM PERIODS
+      // ======================================================
+      //
+      // إذا الخيار مفعّل:
+      //
+      // المشرف اللي أقل من 4 له أولوية.
+      //
+      // إذا الاثنين أقل من 4:
+      // صاحب الـ deficit الأكبر أولاً.
+      //
       // ======================================================
 
-      if (!allQuotasReached) {
-        const aHasQuota = a.quota !== null && a.currentTotal < Number(a.quota);
+      if (minimumEnabled) {
+        const aNeedsMinimum =
+          a.currentTotal <
+          minimumTarget;
 
-        const bHasQuota = b.quota !== null && b.currentTotal < Number(b.quota);
+        const bNeedsMinimum =
+          b.currentTotal <
+          minimumTarget;
 
-        // المشرف الذي لم يصل Target بعد له أولوية
-        if (aHasQuota !== bHasQuota) {
-          return aHasQuota ? -1 : 1;
+        // واحد يحتاج Minimum والثاني لا
+        if (
+          aNeedsMinimum !==
+          bNeedsMinimum
+        ) {
+          return aNeedsMinimum
+            ? -1
+            : 1;
         }
 
-        // إذا الاثنين تحت Target
-        if (aHasQuota && bHasQuota) {
-          const aDeficit = Math.max(0, Number(a.quota) - a.currentTotal);
-
-          const bDeficit = Math.max(0, Number(b.quota) - b.currentTotal);
-
+        // الاثنين يحتاجون Minimum
+        if (
+          aNeedsMinimum &&
+          bNeedsMinimum
+        ) {
           // الأكبر deficit أولاً
-          if (aDeficit !== bDeficit) {
-            return bDeficit - aDeficit;
+          if (
+            a.minimumDeficit !==
+            b.minimumDeficit
+          ) {
+            return (
+              b.minimumDeficit -
+              a.minimumDeficit
+            );
           }
 
-          // الأقرب للهدف بعد إضافة الدكتور
-          if (a.quotaDistance !== b.quotaDistance) {
-            return a.quotaDistance - b.quotaDistance;
+          // نفضّل الذي سيبقى عنده deficit أقل بعد الإضافة
+          if (
+            a.projectedMinimumDeficit !==
+            b.projectedMinimumDeficit
+          ) {
+            return (
+              a.projectedMinimumDeficit -
+              b.projectedMinimumDeficit
+            );
           }
 
-          if (a.quotaGapAfterAssignment !== b.quotaGapAfterAssignment) {
-            return a.quotaGapAfterAssignment - b.quotaGapAfterAssignment;
+          // إذا واحد سيصل للـ Minimum
+          if (
+            a.reachesMinimum !==
+            b.reachesMinimum
+          ) {
+            return a.reachesMinimum
+              ? -1
+              : 1;
           }
         }
       }
@@ -2280,48 +2455,84 @@ async function generatePlan(planId, variant = 1) {
       // 2. FAIRNESS
       // ======================================================
 
-      if (a.projectedTotal !== b.projectedTotal) {
-        return a.projectedTotal - b.projectedTotal;
+      if (
+        a.projectedTotal !==
+        b.projectedTotal
+      ) {
+        return (
+          a.projectedTotal -
+          b.projectedTotal
+        );
       }
 
       // ======================================================
       // 3. CONTINUITY
       // ======================================================
 
-      if (a.periodContinuityScore !== b.periodContinuityScore) {
-        return b.periodContinuityScore - a.periodContinuityScore;
+      if (
+        a.periodContinuityScore !==
+        b.periodContinuityScore
+      ) {
+        return (
+          b.periodContinuityScore -
+          a.periodContinuityScore
+        );
       }
 
       // ======================================================
       // 4. CONTINUITY PRIORITY
       // ======================================================
 
-      if (a.continuityPriority !== b.continuityPriority) {
-        return b.continuityPriority - a.continuityPriority;
+      if (
+        a.continuityPriority !==
+        b.continuityPriority
+      ) {
+        return (
+          b.continuityPriority -
+          a.continuityPriority
+        );
       }
 
       // ======================================================
       // 5. CONSECUTIVE PERIODS
       // ======================================================
 
-      if (a.consecutiveScore !== b.consecutiveScore) {
-        return b.consecutiveScore - a.consecutiveScore;
+      if (
+        a.consecutiveScore !==
+        b.consecutiveScore
+      ) {
+        return (
+          b.consecutiveScore -
+          a.consecutiveScore
+        );
       }
 
       // ======================================================
       // 6. DAILY LOAD
       // ======================================================
 
-      if (a.dailyLoad !== b.dailyLoad) {
-        return a.dailyLoad - b.dailyLoad;
+      if (
+        a.dailyLoad !==
+        b.dailyLoad
+      ) {
+        return (
+          a.dailyLoad -
+          b.dailyLoad
+        );
       }
 
       // ======================================================
       // 7. NUMBER OF PROFESSORS
       // ======================================================
 
-      if (a.professorCount !== b.professorCount) {
-        return a.professorCount - b.professorCount;
+      if (
+        a.professorCount !==
+        b.professorCount
+      ) {
+        return (
+          a.professorCount -
+          b.professorCount
+        );
       }
 
       // ======================================================
@@ -2329,37 +2540,75 @@ async function generatePlan(planId, variant = 1) {
       // ======================================================
 
       return (
-        seededShuffle(`${variant}-${a.supervisorId}`) -
-        seededShuffle(`${variant}-${b.supervisorId}`)
+        seededShuffle(
+          `${variant}-${a.supervisorId}`,
+        ) -
+        seededShuffle(
+          `${variant}-${b.supervisorId}`,
+        )
       );
     });
 
     // ========================================================
-    // ⭐ DEBUG
+    // DEBUG
     // ========================================================
 
-    if (ranked[0].periodContinuityScore !== 0) {
-      console.log("🏆 SELECTED SUPERVISOR:", {
-        professor: professor.professor,
+    if (
+      ranked[0].periodContinuityScore !==
+        0 ||
+      ranked[0].needsMinimum
+    ) {
+      console.log(
+        "🏆 SELECTED SUPERVISOR:",
+        {
+          professor:
+            professor.professor,
 
-        supervisor: ranked[0].supervisorId,
+          supervisor:
+            ranked[0].supervisorId,
 
-        quota: ranked[0].quota,
+          currentTotal:
+            ranked[0].currentTotal,
 
-        currentTotal: ranked[0].currentTotal,
+          projectedTotal:
+            ranked[0].projectedTotal,
 
-        projectedTotal: ranked[0].projectedTotal,
+          minimumEnabled:
+            ranked[0].minimumEnabled,
 
-        quotaDistance: ranked[0].quotaDistance,
+          minimumTarget:
+            ranked[0].minimumTarget,
 
-        periodContinuityScore: ranked[0].periodContinuityScore,
+          needsMinimum:
+            ranked[0].needsMinimum,
 
-        continuityPriority: ranked[0].continuityPriority,
+          minimumDeficit:
+            ranked[0].minimumDeficit,
 
-        consecutiveScore: ranked[0].consecutiveScore,
+          projectedMinimumDeficit:
+            ranked[0]
+              .projectedMinimumDeficit,
 
-        dailyLoad: ranked[0].dailyLoad,
-      });
+          reachesMinimum:
+            ranked[0]
+              .reachesMinimum,
+
+          periodContinuityScore:
+            ranked[0]
+              .periodContinuityScore,
+
+          continuityPriority:
+            ranked[0]
+              .continuityPriority,
+
+          consecutiveScore:
+            ranked[0]
+              .consecutiveScore,
+
+          dailyLoad:
+            ranked[0].dailyLoad,
+        },
+      );
     }
 
     // ========================================================
@@ -2372,25 +2621,30 @@ async function generatePlan(planId, variant = 1) {
     // Assign Professor
     // ========================================================
 
-    const ok = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      selected.supervisorId,
-      result,
-      cand,
-      bundleAssignments,
-      professorAssignments,
-    );
+    const ok =
+      assignProfessorToSupervisor(
+        professor.key,
+        professor.bundles,
+        selected.supervisorId,
+        result,
+        cand,
+        bundleAssignments,
+        professorAssignments,
+      );
 
     if (!ok) {
       conflicts.push({
-        type: "PROFESSOR_ASSIGNMENT_FAILED",
+        type:
+          "PROFESSOR_ASSIGNMENT_FAILED",
 
-        professor: professor.professor,
+        professor:
+          professor.professor,
 
-        professor_id: professor.professor_id,
+        professor_id:
+          professor.professor_id,
 
-        supervisor_id: selected.supervisorId,
+        supervisor_id:
+          selected.supervisorId,
       });
 
       console.warn(
@@ -2403,96 +2657,194 @@ async function generatePlan(planId, variant = 1) {
   // Save Assignments
   // ==========================================================
 
-  await saveAssignments(planId, result);
+  await saveAssignments(
+    planId,
+    result,
+  );
 
   // ==========================================================
   // Statistics
   // ==========================================================
 
-  const assignedGroupIds = new Set(
-    result.map((r) => Number(r.session_group_id)),
-  );
+  const assignedGroupIds =
+    new Set(
+      result.map((r) =>
+        Number(
+          r.session_group_id,
+        ),
+      ),
+    );
 
-  const assignedGroups = assignedGroupIds.size;
+  const assignedGroups =
+    assignedGroupIds.size;
 
-  const totalGroups = groups.length;
+  const totalGroups =
+    groups.length;
 
-  const supervisorsUsed = Object.values(cand).filter((c) => c.total > 0);
+  const supervisorsUsed =
+    Object.values(cand).filter(
+      (c) => c.total > 0,
+    );
 
+  // ==========================================================
   // Fairness
-  const totals = Object.values(cand).map((c) => Number(c.total || 0));
+  // ==========================================================
 
-  const minTotal = totals.length ? Math.min(...totals) : 0;
+  const totals =
+    Object.values(cand).map(
+      (c) =>
+        Number(c.total || 0),
+    );
 
-  const maxTotal = totals.length ? Math.max(...totals) : 0;
+  const minTotal = totals.length
+    ? Math.min(...totals)
+    : 0;
 
-  const fairnessDifference = maxTotal - minTotal;
+  const maxTotal = totals.length
+    ? Math.max(...totals)
+    : 0;
 
-  const totalBundles = bundles.length;
+  const fairnessDifference =
+    maxTotal - minTotal;
 
-  const assignedBundles = bundleAssignments.size;
+  const totalBundles =
+    bundles.length;
+
+  const assignedBundles =
+    bundleAssignments.size;
 
   // ==========================================================
   // Professor Uniqueness
   // ==========================================================
 
-  const professorSupervisorCheck = new Map();
+  const professorSupervisorCheck =
+    new Map();
 
   for (const row of result) {
-    const professorKey = getProfessorKey({
-      professor_id: row.professor_id,
+    const professorKey =
+      getProfessorKey({
+        professor_id:
+          row.professor_id,
 
-      professor_name: row.professor,
-    });
+        professor_name:
+          row.professor,
+      });
 
-    if (!professorSupervisorCheck.has(professorKey)) {
-      professorSupervisorCheck.set(professorKey, Number(row.supervisor_id));
+    if (
+      !professorSupervisorCheck.has(
+        professorKey,
+      )
+    ) {
+      professorSupervisorCheck.set(
+        professorKey,
+        Number(
+          row.supervisor_id,
+        ),
+      );
     } else {
-      const existing = professorSupervisorCheck.get(professorKey);
+      const existing =
+        professorSupervisorCheck.get(
+          professorKey,
+        );
 
-      if (Number(existing) !== Number(row.supervisor_id)) {
-        professorSupervisorCheck.set(professorKey, "MULTIPLE");
+      if (
+        Number(existing) !==
+        Number(row.supervisor_id)
+      ) {
+        professorSupervisorCheck.set(
+          professorKey,
+          "MULTIPLE",
+        );
       }
     }
   }
 
   let professorUniquenessViolations = 0;
 
-  for (const [professorKey, supervisorId] of professorSupervisorCheck) {
-    const assigned = professorAssignments.get(professorKey);
+  for (const [
+    professorKey,
+    supervisorId,
+  ] of professorSupervisorCheck) {
+    const assigned =
+      professorAssignments.get(
+        professorKey,
+      );
 
-    if (supervisorId === "MULTIPLE") {
+    if (
+      supervisorId === "MULTIPLE"
+    ) {
       professorUniquenessViolations++;
 
       continue;
     }
 
-    if (assigned !== undefined && Number(assigned) !== Number(supervisorId)) {
+    if (
+      assigned !== undefined &&
+      Number(assigned) !==
+        Number(supervisorId)
+    ) {
       professorUniquenessViolations++;
     }
   }
 
   // ==========================================================
-  // Quota Statistics
+  // Minimum Statistics
   // ==========================================================
 
-  const quotaStatistics = Object.values(cand).map((c) => {
-    const supervisor = supervisors.find((s) => Number(s.id) === Number(c.id));
+  const minimumStatistics =
+    Object.values(cand).map(
+      (c) => {
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(c.id),
+          );
 
-    const target = quotaMap.has(c.id) ? quotaMap.get(c.id) : null;
+        const reached =
+          minimumEnabled
+            ? c.total >=
+              minimumTarget
+            : null;
 
-    return {
-      "Supervisor ID": c.id,
+        return {
+          "Supervisor ID":
+            c.id,
 
-      Supervisor: supervisor?.name || c.id,
+          Supervisor:
+            supervisor?.name ||
+            c.id,
 
-      "Actual Periods": c.total,
+          "Actual Periods":
+            c.total,
 
-      "Target Periods": target ?? "",
+          "Minimum Periods":
+            minimumEnabled
+              ? minimumTarget
+              : "",
 
-      Difference: target !== null ? c.total - target : "",
-    };
-  });
+          "Minimum Reached":
+            minimumEnabled
+              ? reached
+                ? "Yes"
+                : "No"
+              : "",
+
+          "Used Days":
+            Object.keys(
+              c.byDay,
+            ).length,
+        };
+      },
+    );
+
+  const minimumsReached =
+    hasReachedAllMinimums(
+      cand,
+      selectedSupervisorIds,
+      minimumEnabled,
+      minimumTarget,
+    );
 
   // ==========================================================
   // Logs
@@ -2502,29 +2854,58 @@ async function generatePlan(planId, variant = 1) {
     `✅ Plan generated: ${assignedGroups}/${totalGroups} groups assigned`,
   );
 
-  console.log(`📦 Bundles assigned: ${assignedBundles}/${totalBundles}`);
+  console.log(
+    `📦 Bundles assigned: ${assignedBundles}/${totalBundles}`,
+  );
 
-  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
+  console.log(
+    `👨‍🏫 Unique professors: ${professorGroups.length}`,
+  );
 
-  console.log(`👥 Supervisors used: ${supervisorsUsed.length}`);
+  console.log(
+    `👥 Supervisors used: ${supervisorsUsed.length}`,
+  );
 
-  console.log(`⚠️ Conflicts: ${conflicts.length}`);
+  console.log(
+    `⚠️ Conflicts: ${conflicts.length}`,
+  );
 
-  console.log(`⚖️ Fairness difference: ${fairnessDifference}`);
+  console.log(
+    `⚖️ Fairness difference: ${fairnessDifference}`,
+  );
 
   console.log(
     `🔒 Professor uniqueness violations: ${professorUniquenessViolations}`,
   );
 
-  console.log("🎯 Quota statistics:", quotaStatistics);
+  if (minimumEnabled) {
+    console.log(
+      `🎯 Minimum periods target: ${minimumTarget}`,
+    );
+
+    console.log(
+      `🎯 All minimums reached: ${minimumsReached}`,
+    );
+
+    console.log(
+      "🎯 Minimum statistics:",
+      minimumStatistics,
+    );
+  }
 
   // ==========================================================
   // Export Excel
   // ==========================================================
 
-  const exportDir = path.join(__dirname, "../exports");
+  const exportDir =
+    path.join(
+      __dirname,
+      "../exports",
+    );
 
-  if (!fs.existsSync(exportDir)) {
+  if (
+    !fs.existsSync(exportDir)
+  ) {
     fs.mkdirSync(exportDir, {
       recursive: true,
     });
@@ -2534,127 +2915,205 @@ async function generatePlan(planId, variant = 1) {
   // Distribution Sheet
   // ==========================================================
 
-  const distributionRows = result.map((row) => {
-    const supervisor = supervisors.find(
-      (s) => Number(s.id) === Number(row.supervisor_id),
-    );
+  const distributionRows =
+    result.map((row) => {
+      const supervisor =
+        supervisors.find(
+          (s) =>
+            Number(s.id) ===
+            Number(
+              row.supervisor_id,
+            ),
+        );
 
-    return {
-      "Session Group ID": row.session_group_id,
+      return {
+        "Session Group ID":
+          row.session_group_id,
 
-      CRN: row.crn,
+        CRN: row.crn,
 
-      Professor: row.professor,
+        Professor:
+          row.professor,
 
-      Date: row.date,
+        Date: row.date,
 
-      Period: row.period,
+        Period: row.period,
 
-      Supervisor: supervisor?.name || row.supervisor_id,
-    };
-  });
+        Supervisor:
+          supervisor?.name ||
+          row.supervisor_id,
+      };
+    });
 
   // ==========================================================
   // Conflicts Sheet
   // ==========================================================
 
-  const conflictsRows = conflicts.map((item) => ({
-    Date: item.date || "",
+  const conflictsRows =
+    conflicts.map((item) => ({
+      Date:
+        item.date || "",
 
-    Period: item.period || "",
+      Period:
+        item.period || "",
 
-    Professor: item.professor || "",
+      Professor:
+        item.professor || "",
 
-    "Professor ID": item.professor_id || "",
+      "Professor ID":
+        item.professor_id || "",
 
-    Type: item.type || "",
+      Type:
+        item.type || "",
 
-    "Supervisor ID": item.supervisor_id || "",
+      "Supervisor ID":
+        item.supervisor_id || "",
 
-    Message: item.message || "",
-  }));
+      Message:
+        item.message || "",
+    }));
 
   // ==========================================================
   // Statistics Sheet
   // ==========================================================
 
-  const statisticsRows = Object.values(cand).map((c) => {
-    const supervisor = supervisors.find((s) => Number(s.id) === Number(c.id));
+  const statisticsRows =
+    Object.values(cand).map(
+      (c) => {
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(c.id),
+          );
 
-    const target = quotaMap.has(c.id) ? quotaMap.get(c.id) : null;
+        const minimumReached =
+          minimumEnabled
+            ? c.total >=
+              minimumTarget
+            : null;
 
-    return {
-      "Supervisor ID": c.id,
+        return {
+          "Supervisor ID":
+            c.id,
 
-      Supervisor: supervisor?.name || c.id,
+          Supervisor:
+            supervisor?.name ||
+            c.id,
 
-      "Total Periods": c.total,
+          "Total Periods":
+            c.total,
 
-      "Target Periods": target ?? "",
+          "Minimum Periods":
+            minimumEnabled
+              ? minimumTarget
+              : "",
 
-      "Difference From Target": target !== null ? c.total - target : "",
+          "Minimum Reached":
+            minimumEnabled
+              ? minimumReached
+                ? "Yes"
+                : "No"
+              : "",
 
-      "Used Days": Object.keys(c.byDay).length,
-    };
-  });
+          "Used Days":
+            Object.keys(
+              c.byDay,
+            ).length,
+        };
+      },
+    );
 
   // ==========================================================
   // Professor Assignment Sheet
   // ==========================================================
 
-  const professorRows = professorGroups.map((professor) => {
-    const supervisorId = professorAssignments.get(professor.key);
+  const professorRows =
+    professorGroups.map(
+      (professor) => {
+        const supervisorId =
+          professorAssignments.get(
+            professor.key,
+          );
 
-    const supervisor = supervisors.find(
-      (s) => Number(s.id) === Number(supervisorId),
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(
+                supervisorId,
+              ),
+          );
+
+        return {
+          "Professor ID":
+            professor.professor_id,
+
+          Professor:
+            professor.professor,
+
+          "Total Periods":
+            professor.bundles.length,
+
+          Supervisor:
+            supervisor?.name ||
+            supervisorId ||
+            "",
+        };
+      },
     );
-
-    return {
-      "Professor ID": professor.professor_id,
-
-      Professor: professor.professor,
-
-      "Total Periods": professor.bundles.length,
-
-      Supervisor: supervisor?.name || supervisorId || "",
-    };
-  });
-
-  // ==========================================================
-  // Quota Sheet
-  // ==========================================================
-
-  const quotaRows = quotaStatistics;
 
   // ==========================================================
   // Workbook
   // ==========================================================
 
-  const workbook = xlsx.utils.book_new();
+  const workbook =
+    xlsx.utils.book_new();
 
-  const distributionSheet = xlsx.utils.json_to_sheet(distributionRows);
+  const distributionSheet =
+    xlsx.utils.json_to_sheet(
+      distributionRows,
+    );
 
-  const conflictsSheet = xlsx.utils.json_to_sheet(
-    conflictsRows.length
-      ? conflictsRows
-      : [
-          {
-            Status: "No conflicts",
-          },
-        ],
+  const conflictsSheet =
+    xlsx.utils.json_to_sheet(
+      conflictsRows.length
+        ? conflictsRows
+        : [
+            {
+              Status:
+                "No conflicts",
+            },
+          ],
+    );
+
+  const statisticsSheet =
+    xlsx.utils.json_to_sheet(
+      statisticsRows,
+    );
+
+  const professorsSheet =
+    xlsx.utils.json_to_sheet(
+      professorRows,
+    );
+
+  xlsx.utils.book_append_sheet(
+    workbook,
+    distributionSheet,
+    "Distribution",
   );
 
-  const statisticsSheet = xlsx.utils.json_to_sheet(statisticsRows);
+  xlsx.utils.book_append_sheet(
+    workbook,
+    conflictsSheet,
+    "Conflicts",
+  );
 
-  const professorsSheet = xlsx.utils.json_to_sheet(professorRows);
-
-  const quotasSheet = xlsx.utils.json_to_sheet(quotaRows);
-
-  xlsx.utils.book_append_sheet(workbook, distributionSheet, "Distribution");
-
-  xlsx.utils.book_append_sheet(workbook, conflictsSheet, "Conflicts");
-
-  xlsx.utils.book_append_sheet(workbook, statisticsSheet, "Statistics");
+  xlsx.utils.book_append_sheet(
+    workbook,
+    statisticsSheet,
+    "Statistics",
+  );
 
   xlsx.utils.book_append_sheet(
     workbook,
@@ -2662,17 +3121,47 @@ async function generatePlan(planId, variant = 1) {
     "Professor Assignment",
   );
 
-  xlsx.utils.book_append_sheet(workbook, quotasSheet, "Period Quotas");
+  // ==========================================================
+  // Minimum Periods Sheet
+  // ==========================================================
+  //
+  // هذا بدل Period Quotas
+  //
+  // إذا Minimum غير مفعّل، لا نضيف Sheet إضافي.
+  //
+  // ==========================================================
+
+  if (minimumEnabled) {
+    const minimumSheet =
+      xlsx.utils.json_to_sheet(
+        minimumStatistics,
+      );
+
+    xlsx.utils.book_append_sheet(
+      workbook,
+      minimumSheet,
+      "Minimum Periods",
+    );
+  }
 
   // ==========================================================
   // Export Path
   // ==========================================================
 
-  const exportPath = path.join(exportDir, `plan_${planId}.xlsx`);
+  const exportPath =
+    path.join(
+      exportDir,
+      `plan_${planId}.xlsx`,
+    );
 
-  xlsx.writeFile(workbook, exportPath);
+  xlsx.writeFile(
+    workbook,
+    exportPath,
+  );
 
-  console.log(`📄 Excel exported: ${exportPath}`);
+  console.log(
+    `📄 Excel exported: ${exportPath}`,
+  );
 
   // ==========================================================
   // Return
@@ -2683,9 +3172,11 @@ async function generatePlan(planId, variant = 1) {
 
     planId,
 
-    assigned: assignedGroups,
+    assigned:
+      assignedGroups,
 
-    total: totalGroups,
+    total:
+      totalGroups,
 
     assignedBundles,
 
@@ -2693,23 +3184,38 @@ async function generatePlan(planId, variant = 1) {
 
     conflicts,
 
-    conflictsCount: conflicts.length,
+    conflictsCount:
+      conflicts.length,
 
-    supervisorsUsed: supervisorsUsed.length,
+    supervisorsUsed:
+      supervisorsUsed.length,
 
     fairnessDifference,
 
-    idealFairnessRange: "0-1",
+    idealFairnessRange:
+      "0-1",
 
     professorUniquenessViolations,
 
     exportPath,
 
-    statistics: statisticsRows,
+    statistics:
+      statisticsRows,
 
-    quotaStatistics,
+    minimumPeriodsEnabled:
+      minimumEnabled,
 
-    selectedSupervisors: selectedSupervisorIds,
+    minimumPeriods:
+      minimumEnabled
+        ? minimumTarget
+        : null,
+
+    minimumsReached,
+
+    minimumStatistics,
+
+    selectedSupervisors:
+      selectedSupervisorIds,
   };
 }
 
@@ -2719,10 +3225,15 @@ async function generatePlan(planId, variant = 1) {
 
 // بنخليها للتوافق مع باقي المشروع
 // الخوارزمية الجديدة ما بتستخدمها كـ hard restriction
-function buildDailyPoolsForPlan(days, supervisorIds) {
+function buildDailyPoolsForPlan(
+  days,
+  supervisorIds,
+) {
   const pools = {};
 
-  const ids = supervisorIds.map(Number).filter(Number.isFinite);
+  const ids = supervisorIds
+    .map(Number)
+    .filter(Number.isFinite);
 
   if (!ids.length) {
     return pools;
@@ -2730,20 +3241,34 @@ function buildDailyPoolsForPlan(days, supervisorIds) {
 
   let previousPool = [];
 
-  for (let i = 0; i < days.length; i++) {
+  for (
+    let i = 0;
+    i < days.length;
+    i++
+  ) {
     const day = days[i];
 
-    let available = ids.filter((id) => !previousPool.includes(id));
+    let available = ids.filter(
+      (id) =>
+        !previousPool.includes(id),
+    );
 
     if (!available.length) {
       available = [...ids];
     }
 
-    const shuffled = seededShuffle(available, i + 1);
+    const shuffled =
+      seededShuffle(
+        available,
+        i + 1,
+      );
 
-    pools[day] = shuffled.length ? shuffled : [...ids];
+    pools[day] = shuffled.length
+      ? shuffled
+      : [...ids];
 
-    previousPool = pools[day];
+    previousPool =
+      pools[day];
   }
 
   return pools;
@@ -2755,6 +3280,8 @@ function buildDailyPoolsForPlan(days, supervisorIds) {
 
 module.exports = {
   importExcel,
+
   generatePlan,
+
   buildDailyPoolsForPlan,
 };

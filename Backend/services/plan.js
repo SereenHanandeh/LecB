@@ -86,206 +86,6 @@ async function getDutyPool(planId) {
   return result.rows;
 }
 
-// =====================================================
-// Period Quotas
-// =====================================================
-// =====================================================
-// Period Quotas
-// =====================================================
-
-// حفظ عدد الفترات المستهدف لكل مشرف
-//
-// Dashboard يرسل Array بهذا الشكل:
-//
-// [
-//   { supervisorId: 1, quota: 10 },
-//   { supervisorId: 2, quota: 12 }
-// ]
-
-async function savePeriodQuotas(
-  planId,
-  supervisors = []
-) {
-  console.log(
-    "🎯 SAVING PERIOD QUOTAS:",
-    {
-      planId,
-      supervisors,
-    }
-  );
-
-  // ---------------------------------------------------
-  // حذف الـ quotas القديمة للخطة
-  // ---------------------------------------------------
-
-  await pool.query(
-    `
-    DELETE FROM plan_period_quotas
-    WHERE plan_id = $1
-    `,
-    [planId]
-  );
-
-  // ---------------------------------------------------
-  // التأكد من البيانات
-  // ---------------------------------------------------
-
-  if (
-    !Array.isArray(supervisors) ||
-    supervisors.length === 0
-  ) {
-    console.log(
-      "ℹ️ No period quotas received."
-    );
-
-    return [];
-  }
-
-  const saved = [];
-
-  // ---------------------------------------------------
-  // حفظ كل Quota
-  // ---------------------------------------------------
-
-  for (const item of supervisors) {
-    const sid = Number(
-      item.supervisorId ??
-      item.supervisor_id
-    );
-
-    const target = Number(
-      item.quota ??
-      item.targetPeriods ??
-      item.target_periods
-    );
-
-    // -------------------------------------------------
-    // التحقق من Supervisor ID
-    // -------------------------------------------------
-
-    if (!Number.isInteger(sid)) {
-      console.warn(
-        `⚠️ Invalid supervisor ID in quota:`,
-        item
-      );
-
-      continue;
-    }
-
-    // -------------------------------------------------
-    // التحقق من Target
-    // -------------------------------------------------
-
-    if (
-      !Number.isInteger(target) ||
-      target <= 0
-    ) {
-      console.warn(
-        `⚠️ Invalid period quota for supervisor ${sid}:`,
-        item
-      );
-
-      continue;
-    }
-
-    // -------------------------------------------------
-    // التأكد أن المشرف موجود و Active
-    // -------------------------------------------------
-
-    const supervisorCheck =
-      await pool.query(
-        `
-        SELECT id, name
-        FROM supervisors
-        WHERE id = $1
-          AND active = TRUE
-        `,
-        [sid]
-      );
-
-    if (
-      supervisorCheck.rowCount === 0
-    ) {
-      console.warn(
-        `⚠️ Supervisor ${sid} does not exist or inactive`
-      );
-
-      continue;
-    }
-
-    // -------------------------------------------------
-    // حفظ الـ Quota
-    // -------------------------------------------------
-
-    const result = await pool.query(
-      `
-      INSERT INTO plan_period_quotas (
-        plan_id,
-        supervisor_id,
-        target_periods
-      )
-      VALUES ($1, $2, $3)
-
-      ON CONFLICT (plan_id, supervisor_id)
-      DO UPDATE SET
-        target_periods =
-          EXCLUDED.target_periods
-
-      RETURNING *
-      `,
-      [
-        planId,
-        sid,
-        target,
-      ]
-    );
-
-    saved.push(
-      result.rows[0]
-    );
-
-    console.log(
-      `✅ Quota saved: supervisor ${sid} = ${target}`
-    );
-  }
-
-  // ---------------------------------------------------
-  // تحقق بعد الحفظ
-  // ---------------------------------------------------
-
-  const check =
-    await getPeriodQuotas(planId);
-
-  console.log(
-    "🎯 QUOTAS AFTER SAVE:",
-    check
-  );
-
-  return check;
-}
-
-// =====================================================
-// جلب Period Quotas
-// =====================================================
-
-async function getPeriodQuotas(planId) {
-  const result = await pool.query(
-    `
-    SELECT
-      q.supervisor_id,
-      q.target_periods,
-      s.name AS supervisor_name
-    FROM plan_period_quotas q
-    JOIN supervisors s
-      ON s.id = q.supervisor_id
-    WHERE q.plan_id = $1
-    ORDER BY s.id
-    `,
-    [planId]
-  );
-
-  return result.rows;
-}
 
 // =====================================================
 // Preassignments
@@ -684,26 +484,7 @@ async function getPlanContext(planId) {
   );
 
   // ---------------------------------------------------
-  // 5. Period Quotas
-  // ---------------------------------------------------
-
-  const periodQuotasResult = await pool.query(
-    `
-    SELECT
-      q.supervisor_id,
-      q.target_periods,
-      s.name AS supervisor_name
-    FROM plan_period_quotas q
-    JOIN supervisors s
-      ON s.id = q.supervisor_id
-    WHERE q.plan_id = $1
-    ORDER BY s.id
-    `,
-    [planId]
-  );
-
-  // ---------------------------------------------------
-  // 6. Preassignments
+  // 5. Preassignments
   // ---------------------------------------------------
 
   const preResult = await pool.query(
@@ -767,11 +548,10 @@ async function getPlanContext(planId) {
   groups: sessionsResult.rows,
   supervisors: supervisorsResult.rows,
   dutyPool: dutyPoolResult.rows,
-  periodQuotas: periodQuotasResult.rows,
   pre: preResult.rows,
   locks: locksResult.rows,
   affinities: affResult.rows,
-    aff: affResult.rows,
+  aff: affResult.rows,
 
 };
 }
@@ -1122,9 +902,6 @@ module.exports = {
 
   saveDutyPool,
   getDutyPool,
-
-  savePeriodQuotas,
-  getPeriodQuotas,
 
   savePreassignments,
   saveAffinities,

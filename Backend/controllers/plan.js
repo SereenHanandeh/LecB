@@ -1,7 +1,6 @@
 const {
   createPlanRow,
   saveDutyPool,
-  savePeriodQuotas,
   savePreassignments,
   saveAffinities,
   fetchPlan,
@@ -162,118 +161,6 @@ async function setDutyPool(req, res) {
 }
 
 // =====================================================
-// Set Period Quotas
-// =====================================================
-
-// =====================================================
-// Set Period Quotas
-// =====================================================
-
-async function setPeriodQuotas(req, res) {
-  try {
-    const { planId } = req.params;
-    const { supervisors } = req.body;
-
-    console.log("========================================");
-    console.log("🎯 SET PERIOD QUOTAS");
-    console.log("📌 planId:", planId);
-    console.log("📌 supervisors received:", supervisors);
-    console.log(
-      "📌 supervisors type:",
-      Array.isArray(supervisors)
-        ? "array"
-        : typeof supervisors
-    );
-    console.log("========================================");
-
-    if (!planId) {
-      return res.status(400).json({
-        success: false,
-        error: "planId is required",
-      });
-    }
-
-    // Frontend sends an ARRAY
-    if (!Array.isArray(supervisors)) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "supervisors must be an array",
-      });
-    }
-
-    const normalized = [];
-
-    for (const item of supervisors) {
-      const sid = Number(
-        item.supervisorId ??
-        item.supervisor_id
-      );
-
-      const target = Number(
-        item.quota ??
-        item.targetPeriods ??
-        item.target_periods
-      );
-
-      if (!Number.isInteger(sid)) {
-        return res.status(400).json({
-          success: false,
-          error:
-            `Invalid supervisor ID: ${item.supervisorId}`,
-        });
-      }
-
-      if (
-        !Number.isInteger(target) ||
-        target <= 0
-      ) {
-        return res.status(400).json({
-          success: false,
-          error:
-            `Invalid period quota for supervisor ${sid}`,
-        });
-      }
-
-      normalized.push({
-        supervisorId: sid,
-        quota: target,
-      });
-    }
-
-    console.log(
-      "🎯 NORMALIZED QUOTAS:",
-      normalized
-    );
-
-    const saved =
-      await savePeriodQuotas(
-        planId,
-        normalized
-      );
-
-    console.log(
-      "✅ SAVED QUOTAS:",
-      saved
-    );
-
-    return res.json({
-      success: true,
-      message:
-        "Period quotas saved successfully",
-      data: saved,
-    });
-
-  } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error saving period quotas"
-    );
-  }
-}
-
-// =====================================================
 // Add Preassignments
 // =====================================================
 
@@ -353,9 +240,12 @@ async function generate(req, res) {
   try {
     const { planId } = req.params;
 
-    const { variant = 1 } = req.body || {};
+    const {
+      variant = 1,
+      minimumPeriodsEnabled = false,
+      minimumPeriods = 4,
+    } = req.body || {};
 
-    // planId هو UUID
     if (!planId) {
       return res.status(400).json({
         success: false,
@@ -365,31 +255,82 @@ async function generate(req, res) {
 
     const parsedVariant = Number(variant);
 
-    if (!Number.isInteger(parsedVariant) || parsedVariant < 1) {
+    if (
+      !Number.isInteger(parsedVariant) ||
+      parsedVariant < 1
+    ) {
       return res.status(400).json({
         success: false,
-        error: "variant must be a positive integer",
+        error:
+          "variant must be a positive integer",
       });
     }
 
-    console.log(`🚀 Generating plan ${planId}, variant ${parsedVariant}`);
+    const parsedMinimumEnabled =
+      Boolean(minimumPeriodsEnabled);
 
-    const generated = await generatePlan(planId, parsedVariant);
+    const parsedMinimumPeriods =
+      Number(minimumPeriods);
 
-    console.log("✅ Generated plan:", generated);
+    if (
+      !Number.isInteger(
+        parsedMinimumPeriods,
+      ) ||
+      parsedMinimumPeriods < 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "minimumPeriods must be a positive integer",
+      });
+    }
+
+    console.log(
+      "🚀 GENERATING PLAN",
+      {
+        planId,
+        variant: parsedVariant,
+        minimumPeriodsEnabled:
+          parsedMinimumEnabled,
+        minimumPeriods:
+          parsedMinimumPeriods,
+      },
+    );
+
+    const generated =
+      await generatePlan(
+        planId,
+        parsedVariant,
+        parsedMinimumEnabled,
+        parsedMinimumPeriods,
+      );
+
+    console.log(
+      "✅ Generated plan:",
+      generated,
+    );
 
     return res.json({
       success: true,
-      message: "Plan generated successfully",
 
-      data: generated.result || [],
+      message:
+        "Plan generated successfully",
 
-      stats: generated.stats || null,
+      data: generated,
 
-      downloadUrl: `/exports/plan_${planId}.xlsx`,
+      stats:
+        generated.statistics || null,
+
+      downloadUrl:
+        `/exports/plan_${planId}.xlsx`,
     });
+
   } catch (err) {
-    return handleError(res, err, "Error generating plan");
+    return handleError(
+      res,
+      err,
+      "Error generating plan",
+    );
   }
 }
 
@@ -623,7 +564,6 @@ async function getStats(req, res) {
 module.exports = {
   createPlan,
   setDutyPool,
-  setPeriodQuotas,
   addPreassignments,
   addAffinities,
   generate,

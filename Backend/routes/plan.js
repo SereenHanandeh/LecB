@@ -14,12 +14,6 @@ planRouter.post(
   Plan.setDutyPool
 );
 
-// ✅ Period Quotas
-planRouter.post(
-  "/:planId/period-quotas",
-  Plan.setPeriodQuotas
-);
-
 planRouter.post(
   "/:planId/preassign",
   Plan.addPreassignments
