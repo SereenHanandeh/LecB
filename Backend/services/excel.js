@@ -1253,27 +1253,83 @@ function assignProfessorToSupervisor(
   return true;
 }
 
+
+// ============================================================
+// Minimum Allocation Candidate
+// ============================================================
+
+function getMinimumCandidateScore({
+  supervisor,
+  professor,
+  supervisorOptions,
+  professorOptions,
+  minimumTarget,
+}) {
+  const workload = professor.bundles.length;
+
+  const currentTotal = Number(supervisor.total || 0);
+
+  const projectedTotal = currentTotal + workload;
+
+  const currentDeficit = Math.max(
+    0,
+    minimumTarget - currentTotal,
+  );
+
+  const projectedDeficit = Math.max(
+    0,
+    minimumTarget - projectedTotal,
+  );
+
+  const reachesMinimum =
+    currentTotal < minimumTarget &&
+    projectedTotal >= minimumTarget;
+
+  const overshoot = Math.max(
+    0,
+    projectedTotal - minimumTarget,
+  );
+
+  const continuityScore =
+    getPeriodContinuityScore(
+      supervisor,
+      professor.bundles,
+    );
+
+  const consecutiveScore =
+    getProfessorConsecutiveScore(
+      supervisor,
+      professor.bundles,
+    );
+
+  return {
+    supervisor,
+    professor,
+
+    workload,
+
+    currentTotal,
+    projectedTotal,
+
+    currentDeficit,
+    projectedDeficit,
+
+    reachesMinimum,
+
+    overshoot,
+
+    supervisorOptions,
+    professorOptions,
+
+    continuityScore,
+    consecutiveScore,
+  };
+}
+
 // ============================================================
 // Generate Plan
 // ============================================================
-//
-// minimumPeriodsEnabled:
-//   false = تجاهل الحد الأدنى
-//   true  = كل Supervisor أقل من minimumPeriods له أولوية
-//
-// minimumPeriods:
-//   القيمة الافتراضية = 4
-//
-// يدعم:
-// generatePlan(planId, variant, true, 4)
-//
-// أو:
-// generatePlan(planId, variant, {
-//   minimumPeriodsEnabled: true,
-//   minimumPeriods: 4
-// })
-//
-// ============================================================
+
 
 async function generatePlan(
   planId,
@@ -2141,360 +2197,270 @@ async function generatePlan(
       Number(variant) || 1,
     );
 
-  // ==========================================================
-  // Remaining Professors
-  // ==========================================================
+// ==========================================================
+// Remaining Professors
+// ==========================================================
+//
+// التوزيع يتم على مرحلتين:
+//
+// 1. Minimum Phase:
+//    نحاول إيصال كل Supervisor إلى الحد الأدنى.
+//
+// 2. Normal Phase:
+//    بعد تحقيق الـ Minimum نكمل التوزيع بالـ Fairness
+//    + Continuity + باقي القواعد.
+//
+// ==========================================================
 
-  for (const professor of professorGroups) {
-    // إذا موزع من قبل
-    if (
-      professorAssignments.has(
-        professor.key,
-      )
-    ) {
-      continue;
-    }
+const getRemainingProfessors = () =>
+  professorGroups.filter(
+    (professor) =>
+      !professorAssignments.has(professor.key),
+  );
+
+// ==========================================================
+// PHASE 1 — Minimum Period Allocation
+// ==========================================================
+
+if (minimumEnabled) {
+  console.log("========================================");
+  console.log("🎯 STARTING MINIMUM PERIOD ALLOCATION");
+  console.log("========================================");
+
+  let minimumRound = 0;
+
+  while (true) {
+    minimumRound++;
 
     // --------------------------------------------------------
-    // هل كل المشرفين وصلوا للـ Minimum؟
+    // المشرفين الذين لم يصلوا إلى 4
     // --------------------------------------------------------
 
-    const allMinimumsReached =
-      hasReachedAllMinimums(
-        cand,
-        selectedSupervisorIds,
-        minimumEnabled,
-        minimumTarget,
+    const supervisorsBelowMinimum =
+      selectedSupervisorIds
+        .map((id) => cand[Number(id)])
+        .filter(
+          (supervisor) =>
+            supervisor &&
+            Number(supervisor.total || 0) <
+              minimumTarget,
+        );
+
+    // --------------------------------------------------------
+    // كل المشرفين وصلوا للحد الأدنى
+    // --------------------------------------------------------
+
+    if (!supervisorsBelowMinimum.length) {
+      console.log(
+        "✅ ALL SUPERVISORS REACHED MINIMUM",
       );
 
-    const ranked = [];
-
-    // ========================================================
-    // نفحص كل المشرفين
-    // ========================================================
-
-    for (const supervisorId of selectedSupervisorIds) {
-      const supervisor =
-        cand[supervisorId];
-
-      if (!supervisor) {
-        continue;
-      }
-
-      // الدكتور لازم يركب كامل عند المشرف
-      if (
-        !canSupervisorTakeProfessor(
-          supervisor,
-          professor.bundles,
-        )
-      ) {
-        continue;
-      }
-
-      const workload =
-        professor.bundles.length;
-
-      const currentTotal =
-        Number(
-          supervisor.total || 0,
-        );
-
-      const projectedTotal =
-        currentTotal + workload;
-
-      // --------------------------------------------------------
-      // Minimum Period Information
-      // --------------------------------------------------------
-
-      const minimumInfo =
-        getMinimumInfo(
-          supervisor,
-          workload,
-          minimumEnabled,
-          minimumTarget,
-        );
-
-      // --------------------------------------------------------
-      // الفترات المتتالية
-      // --------------------------------------------------------
-
-      const consecutiveScore =
-        getProfessorConsecutiveScore(
-          supervisor,
-          professor.bundles,
-        );
-
-      // --------------------------------------------------------
-      // Period Continuity
-      // --------------------------------------------------------
-
-      const periodContinuityScore =
-        getPeriodContinuityScore(
-          supervisor,
-          professor.bundles,
-        );
-
-      // --------------------------------------------------------
-      // Continuity Priority
-      // --------------------------------------------------------
-
-      const continuityPriority =
-        getContinuityPriority(
-          supervisor,
-          professor.bundles,
-        );
-
-      // --------------------------------------------------------
-      // ضغط المشرف خلال الأيام
-      // --------------------------------------------------------
-
-      const dailyLoad =
-        getProfessorDailyLoad(
-          supervisor,
-          professor.bundles,
-        );
-
-      // --------------------------------------------------------
-      // عدد الدكاترة عند المشرف
-      // --------------------------------------------------------
-
-      const professorCount =
-        supervisor.assignedProfessors
-          ?.size || 0;
-
-      // --------------------------------------------------------
-      // Score
-      // --------------------------------------------------------
-
-      const noProfessorYet =
-        professorCount === 0;
-
-      let score =
-        periodContinuityScore *
-          1000000 +
-        continuityPriority * 1000 +
-        (noProfessorYet
-          ? 100000000
-          : 0) -
-        projectedTotal * 10000 -
-        dailyLoad * 2;
-
-      // --------------------------------------------------------
-      // Minimum Bonus
-      // --------------------------------------------------------
-      //
-      // مهم:
-      // الـ sort تحت هو المسؤول الأساسي عن الـ Minimum.
-      //
-      // هذا الـ score فقط للمعلومات/debug.
-      //
-
-      if (
-        minimumEnabled &&
-        minimumInfo.needsMinimum &&
-        !allMinimumsReached
-      ) {
-        score +=
-          1000000000 +
-          minimumInfo.deficit *
-            1000000;
-
-        if (
-          minimumInfo.reachesMinimum
-        ) {
-          score += 50000000;
-        }
-      }
-
-      ranked.push({
-        supervisor,
-
-        supervisorId,
-
-        currentTotal,
-
-        projectedTotal,
-
-        consecutiveScore,
-
-        periodContinuityScore,
-
-        continuityPriority,
-
-        dailyLoad,
-
-        professorCount,
-
-        minimumEnabled,
-
-        minimumTarget,
-
-        needsMinimum:
-          minimumInfo.needsMinimum,
-
-        minimumDeficit:
-          minimumInfo.deficit,
-
-        projectedMinimumDeficit:
-          minimumInfo.projectedDeficit,
-
-        reachesMinimum:
-          minimumInfo.reachesMinimum,
-
-        score,
-      });
+      break;
     }
 
-    // ========================================================
-    // No Supervisor
-    // ========================================================
+    const remainingProfessors =
+      getRemainingProfessors();
 
-    if (!ranked.length) {
-      conflicts.push({
-        type:
-          "NO_SUPERVISOR_FOR_PROFESSOR",
+    // --------------------------------------------------------
+    // لا يوجد أساتذة متبقين
+    // --------------------------------------------------------
 
-        professor:
-          professor.professor,
-
-        professor_id:
-          professor.professor_id,
-
-        periods:
-          professor.bundles.length,
-
-        message:
-          "No single supervisor can take all periods of this professor without a same-period conflict.",
-      });
-
+    if (!remainingProfessors.length) {
       console.warn(
-        "⚠️ No supervisor can take entire professor:",
-        professor.professor,
+        "⚠️ No remaining professors available for minimum allocation.",
       );
 
-      continue;
+      break;
     }
 
-    // ========================================================
-    // SORT SUPERVISORS
-    // ========================================================
+    // --------------------------------------------------------
+    // نبحث عن أفضل Professor لكل Supervisor
+    // --------------------------------------------------------
 
-    ranked.sort((a, b) => {
-      // ======================================================
-      // 1. MINIMUM PERIODS
-      // ======================================================
-      //
-      // إذا الخيار مفعّل:
-      //
-      // المشرف اللي أقل من 4 له أولوية.
-      //
-      // إذا الاثنين أقل من 4:
-      // صاحب الـ deficit الأكبر أولاً.
-      //
-      // ======================================================
+    const candidates = [];
 
-      if (minimumEnabled) {
-        const aNeedsMinimum =
-          a.currentTotal <
-          minimumTarget;
+    for (const supervisor of supervisorsBelowMinimum) {
+      const supervisorId =
+        Number(supervisor.id);
 
-        const bNeedsMinimum =
-          b.currentTotal <
-          minimumTarget;
+      // ------------------------------------------------------
+      // كل الأساتذة الذين يستطيع هذا المشرف أخذهم
+      // ------------------------------------------------------
 
-        // واحد يحتاج Minimum والثاني لا
+      const supervisorEligibleProfessors =
+        remainingProfessors.filter(
+          (professor) =>
+            canSupervisorTakeProfessor(
+              supervisor,
+              professor.bundles,
+            ),
+        );
+
+      const supervisorOptions =
+        supervisorEligibleProfessors.length;
+
+      // ------------------------------------------------------
+      // إذا المشرف لا يستطيع أخذ أي Professor
+      // ------------------------------------------------------
+
+      if (!supervisorOptions) {
+        continue;
+      }
+
+      for (const professor of remainingProfessors) {
+        // ----------------------------------------------------
+        // هل الدكتور يركب كامل عند المشرف؟
+        // ----------------------------------------------------
+
         if (
-          aNeedsMinimum !==
-          bNeedsMinimum
+          !canSupervisorTakeProfessor(
+            supervisor,
+            professor.bundles,
+          )
         ) {
-          return aNeedsMinimum
-            ? -1
-            : 1;
+          continue;
         }
 
-        // الاثنين يحتاجون Minimum
-        if (
-          aNeedsMinimum &&
-          bNeedsMinimum
-        ) {
-          // الأكبر deficit أولاً
-          if (
-            a.minimumDeficit !==
-            b.minimumDeficit
-          ) {
-            return (
-              b.minimumDeficit -
-              a.minimumDeficit
-            );
-          }
+        // ----------------------------------------------------
+        // كم مشرف آخر يستطيع أخذ هذا الدكتور
+        // ----------------------------------------------------
 
-          // نفضّل الذي سيبقى عنده deficit أقل بعد الإضافة
-          if (
-            a.projectedMinimumDeficit !==
-            b.projectedMinimumDeficit
-          ) {
-            return (
-              a.projectedMinimumDeficit -
-              b.projectedMinimumDeficit
-            );
-          }
+        const professorOptions =
+          supervisorsBelowMinimum.filter(
+            (otherSupervisor) =>
+              canSupervisorTakeProfessor(
+                otherSupervisor,
+                professor.bundles,
+              ),
+          ).length;
 
-          // إذا واحد سيصل للـ Minimum
-          if (
-            a.reachesMinimum !==
-            b.reachesMinimum
-          ) {
-            return a.reachesMinimum
-              ? -1
-              : 1;
-          }
-        }
+        const candidate =
+          getMinimumCandidateScore({
+            supervisor,
+
+            professor,
+
+            supervisorOptions,
+
+            professorOptions,
+
+            minimumTarget,
+          });
+
+        candidates.push(candidate);
       }
+    }
 
+    // --------------------------------------------------------
+    // لا يوجد أي Assignment ممكن
+    // --------------------------------------------------------
+
+    if (!candidates.length) {
+      console.warn(
+        "⚠️ Cannot satisfy minimum periods because of assignment constraints.",
+      );
+
+      break;
+    }
+
+    // --------------------------------------------------------
+    // ترتيب مرشحي Minimum
+    // --------------------------------------------------------
+
+    candidates.sort((a, b) => {
       // ======================================================
-      // 2. FAIRNESS
+      // 1. نفضّل الذي سيصل للـ Minimum مباشرة
       // ======================================================
 
       if (
-        a.projectedTotal !==
-        b.projectedTotal
+        a.reachesMinimum !==
+        b.reachesMinimum
+      ) {
+        return a.reachesMinimum
+          ? -1
+          : 1;
+      }
+
+      // ======================================================
+      // 2. أقل deficit بعد الإضافة
+      // ======================================================
+
+      if (
+        a.projectedDeficit !==
+        b.projectedDeficit
       ) {
         return (
-          a.projectedTotal -
-          b.projectedTotal
+          a.projectedDeficit -
+          b.projectedDeficit
         );
       }
 
       // ======================================================
-      // 3. CONTINUITY
+      // 3. أقل زيادة فوق الـ Minimum
       // ======================================================
 
       if (
-        a.periodContinuityScore !==
-        b.periodContinuityScore
+        a.overshoot !==
+        b.overshoot
       ) {
         return (
-          b.periodContinuityScore -
-          a.periodContinuityScore
+          a.overshoot -
+          b.overshoot
         );
       }
 
       // ======================================================
-      // 4. CONTINUITY PRIORITY
+      // 4. المشرف الأصعب في إيجاد Professor
       // ======================================================
+      //
+      // إذا Supervisor عنده خيارات قليلة،
+      // نعطيه أولوية حتى لا يعلق بالنهاية.
+      //
 
       if (
-        a.continuityPriority !==
-        b.continuityPriority
+        a.supervisorOptions !==
+        b.supervisorOptions
       ) {
         return (
-          b.continuityPriority -
-          a.continuityPriority
+          a.supervisorOptions -
+          b.supervisorOptions
         );
       }
 
       // ======================================================
-      // 5. CONSECUTIVE PERIODS
+      // 5. Professor عنده خيارات قليلة
+      // ======================================================
+      //
+      // الدكتور الذي لا يستطيع الذهاب إلا لمشرفين قليلين
+      // نعطيه أولوية.
+      //
+
+      if (
+        a.professorOptions !==
+        b.professorOptions
+      ) {
+        return (
+          a.professorOptions -
+          b.professorOptions
+        );
+      }
+
+      // ======================================================
+      // 6. الأفضلية للاستمرارية
+      // ======================================================
+
+      if (
+        a.continuityScore !==
+        b.continuityScore
+      ) {
+        return (
+          b.continuityScore -
+          a.continuityScore
+        );
+      }
+
+      // ======================================================
+      // 7. Consecutive periods
       // ======================================================
 
       if (
@@ -2508,150 +2474,496 @@ async function generatePlan(
       }
 
       // ======================================================
-      // 6. DAILY LOAD
+      // 8. Fairness
       // ======================================================
 
       if (
-        a.dailyLoad !==
-        b.dailyLoad
+        a.projectedTotal !==
+        b.projectedTotal
       ) {
         return (
-          a.dailyLoad -
-          b.dailyLoad
+          a.projectedTotal -
+          b.projectedTotal
         );
       }
 
       // ======================================================
-      // 7. NUMBER OF PROFESSORS
-      // ======================================================
-
-      if (
-        a.professorCount !==
-        b.professorCount
-      ) {
-        return (
-          a.professorCount -
-          b.professorCount
-        );
-      }
-
-      // ======================================================
-      // 8. RANDOMIZATION
+      // 9. Random tie breaker
       // ======================================================
 
       return (
         seededShuffle(
-          `${variant}-${a.supervisorId}`,
+          `${variant}-${a.supervisor.id}-${a.professor.key}`,
         ) -
         seededShuffle(
-          `${variant}-${b.supervisorId}`,
+          `${variant}-${b.supervisor.id}-${b.professor.key}`,
         )
       );
     });
 
-    // ========================================================
-    // DEBUG
-    // ========================================================
+    // --------------------------------------------------------
+    // أفضل Assignment
+    // --------------------------------------------------------
 
-    if (
-      ranked[0].periodContinuityScore !==
-        0 ||
-      ranked[0].needsMinimum
-    ) {
-      console.log(
-        "🏆 SELECTED SUPERVISOR:",
-        {
-          professor:
-            professor.professor,
+    const selected =
+      candidates[0];
 
-          supervisor:
-            ranked[0].supervisorId,
+    console.log(
+      `🎯 MINIMUM ROUND ${minimumRound}:`,
+      {
+        professor:
+          selected.professor.professor,
 
-          currentTotal:
-            ranked[0].currentTotal,
+        supervisor:
+          selected.supervisor.id,
 
-          projectedTotal:
-            ranked[0].projectedTotal,
+        current:
+          selected.currentTotal,
 
-          minimumEnabled:
-            ranked[0].minimumEnabled,
+        workload:
+          selected.workload,
 
-          minimumTarget:
-            ranked[0].minimumTarget,
+        projected:
+          selected.projectedTotal,
 
-          needsMinimum:
-            ranked[0].needsMinimum,
+        target:
+          minimumTarget,
 
-          minimumDeficit:
-            ranked[0].minimumDeficit,
+        reachesMinimum:
+          selected.reachesMinimum,
 
-          projectedMinimumDeficit:
-            ranked[0]
-              .projectedMinimumDeficit,
+        supervisorOptions:
+          selected.supervisorOptions,
 
-          reachesMinimum:
-            ranked[0]
-              .reachesMinimum,
+        professorOptions:
+          selected.professorOptions,
+      },
+    );
 
-          periodContinuityScore:
-            ranked[0]
-              .periodContinuityScore,
-
-          continuityPriority:
-            ranked[0]
-              .continuityPriority,
-
-          consecutiveScore:
-            ranked[0]
-              .consecutiveScore,
-
-          dailyLoad:
-            ranked[0].dailyLoad,
-        },
-      );
-    }
-
-    // ========================================================
-    // أول واحد بعد الترتيب هو الأنسب
-    // ========================================================
-
-    const selected = ranked[0];
-
-    // ========================================================
+    // --------------------------------------------------------
     // Assign Professor
-    // ========================================================
+    // --------------------------------------------------------
 
     const ok =
       assignProfessorToSupervisor(
-        professor.key,
-        professor.bundles,
-        selected.supervisorId,
+        selected.professor.key,
+
+        selected.professor.bundles,
+
+        selected.supervisor.id,
+
         result,
+
         cand,
+
         bundleAssignments,
+
         professorAssignments,
       );
 
+    // --------------------------------------------------------
+    // إذا فشل Assignment
+    // --------------------------------------------------------
+
     if (!ok) {
-      conflicts.push({
-        type:
-          "PROFESSOR_ASSIGNMENT_FAILED",
-
-        professor:
-          professor.professor,
-
-        professor_id:
-          professor.professor_id,
-
-        supervisor_id:
-          selected.supervisorId,
-      });
-
       console.warn(
-        `⚠️ Failed assigning professor ${professor.professor} to supervisor ${selected.supervisorId}`,
+        `⚠️ Minimum assignment failed: Professor ${selected.professor.professor} -> Supervisor ${selected.supervisor.id}`,
       );
+
+      // نحذف هذا المرشح حتى لا نعلق في infinite loop
+      const failedIndex =
+        candidates.indexOf(selected);
+
+      if (failedIndex >= 0) {
+        candidates.splice(
+          failedIndex,
+          1,
+        );
+      }
+
+      // نجرب باقي المرشحين
+      let assignedAlternative =
+        false;
+
+      for (const alternative of candidates) {
+        const alternativeOk =
+          assignProfessorToSupervisor(
+            alternative.professor.key,
+
+            alternative.professor.bundles,
+
+            alternative.supervisor.id,
+
+            result,
+
+            cand,
+
+            bundleAssignments,
+
+            professorAssignments,
+          );
+
+        if (alternativeOk) {
+          assignedAlternative = true;
+
+          console.log(
+            `✅ Alternative minimum assignment succeeded: ${alternative.professor.professor} -> Supervisor ${alternative.supervisor.id}`,
+          );
+
+          break;
+        }
+      }
+
+      if (!assignedAlternative) {
+        console.warn(
+          "⚠️ No alternative minimum assignment was possible.",
+        );
+
+        break;
+      }
     }
   }
+
+  // ----------------------------------------------------------
+  // Minimum Result
+  // ----------------------------------------------------------
+
+  console.log("========================================");
+  console.log(
+    "🎯 MINIMUM ALLOCATION RESULT",
+  );
+  console.log("========================================");
+
+  for (const supervisorId of selectedSupervisorIds) {
+    const supervisor =
+      cand[Number(supervisorId)];
+
+    console.log(
+      `Supervisor ${supervisorId}: ${supervisor?.total || 0}/${minimumTarget}`,
+    );
+  }
+}
+
+// ============================================================
+// PHASE 2 — NORMAL FAIR DISTRIBUTION
+// ============================================================
+
+console.log("========================================");
+console.log("⚖️ STARTING NORMAL FAIR DISTRIBUTION");
+console.log("========================================");
+
+for (const professor of professorGroups) {
+  // ----------------------------------------------------------
+  // إذا موزع من مرحلة Minimum
+  // ----------------------------------------------------------
+
+  if (
+    professorAssignments.has(
+      professor.key,
+    )
+  ) {
+    continue;
+  }
+
+  const ranked = [];
+
+  // ==========================================================
+  // نفحص كل المشرفين
+  // ==========================================================
+
+  for (const supervisorId of selectedSupervisorIds) {
+    const supervisor =
+      cand[Number(supervisorId)];
+
+    if (!supervisor) {
+      continue;
+    }
+
+    // --------------------------------------------------------
+    // الدكتور لازم يركب كامل عند المشرف
+    // --------------------------------------------------------
+
+    if (
+      !canSupervisorTakeProfessor(
+        supervisor,
+        professor.bundles,
+      )
+    ) {
+      continue;
+    }
+
+    const workload =
+      professor.bundles.length;
+
+    const currentTotal =
+      Number(
+        supervisor.total || 0,
+      );
+
+    const projectedTotal =
+      currentTotal + workload;
+
+    // --------------------------------------------------------
+    // Continuity
+    // --------------------------------------------------------
+
+    const consecutiveScore =
+      getProfessorConsecutiveScore(
+        supervisor,
+        professor.bundles,
+      );
+
+    const periodContinuityScore =
+      getPeriodContinuityScore(
+        supervisor,
+        professor.bundles,
+      );
+
+    const continuityPriority =
+      getContinuityPriority(
+        supervisor,
+        professor.bundles,
+      );
+
+    // --------------------------------------------------------
+    // Daily Load
+    // --------------------------------------------------------
+
+    const dailyLoad =
+      getProfessorDailyLoad(
+        supervisor,
+        professor.bundles,
+      );
+
+    // --------------------------------------------------------
+    // Professor Count
+    // --------------------------------------------------------
+
+    const professorCount =
+      supervisor.assignedProfessors
+        ?.size || 0;
+
+    // --------------------------------------------------------
+    // Score
+    // --------------------------------------------------------
+
+    const noProfessorYet =
+      professorCount === 0;
+
+    const score =
+      periodContinuityScore *
+        1000000 +
+      continuityPriority *
+        1000 +
+      (noProfessorYet
+        ? 100000000
+        : 0) -
+      projectedTotal *
+        10000 -
+      dailyLoad * 2;
+
+    ranked.push({
+      supervisor,
+
+      supervisorId,
+
+      currentTotal,
+
+      projectedTotal,
+
+      workload,
+
+      consecutiveScore,
+
+      periodContinuityScore,
+
+      continuityPriority,
+
+      dailyLoad,
+
+      professorCount,
+
+      score,
+    });
+  }
+
+  // ==========================================================
+  // No Supervisor
+  // ==========================================================
+
+  if (!ranked.length) {
+    conflicts.push({
+      type:
+        "NO_SUPERVISOR_FOR_PROFESSOR",
+
+      professor:
+        professor.professor,
+
+      professor_id:
+        professor.professor_id,
+
+      periods:
+        professor.bundles.length,
+
+      message:
+        "No single supervisor can take all periods of this professor without a same-period conflict.",
+    });
+
+    console.warn(
+      "⚠️ No supervisor can take entire professor:",
+      professor.professor,
+    );
+
+    continue;
+  }
+
+  // ==========================================================
+  // NORMAL SORT
+  // ==========================================================
+
+  ranked.sort((a, b) => {
+    // --------------------------------------------------------
+    // 1. Fairness
+    // --------------------------------------------------------
+
+    if (
+      a.projectedTotal !==
+      b.projectedTotal
+    ) {
+      return (
+        a.projectedTotal -
+        b.projectedTotal
+      );
+    }
+
+    // --------------------------------------------------------
+    // 2. Continuity
+    // --------------------------------------------------------
+
+    if (
+      a.periodContinuityScore !==
+      b.periodContinuityScore
+    ) {
+      return (
+        b.periodContinuityScore -
+        a.periodContinuityScore
+      );
+    }
+
+    // --------------------------------------------------------
+    // 3. Continuity Priority
+    // --------------------------------------------------------
+
+    if (
+      a.continuityPriority !==
+      b.continuityPriority
+    ) {
+      return (
+        b.continuityPriority -
+        a.continuityPriority
+      );
+    }
+
+    // --------------------------------------------------------
+    // 4. Consecutive periods
+    // --------------------------------------------------------
+
+    if (
+      a.consecutiveScore !==
+      b.consecutiveScore
+    ) {
+      return (
+        b.consecutiveScore -
+        a.consecutiveScore
+      );
+    }
+
+    // --------------------------------------------------------
+    // 5. Daily Load
+    // --------------------------------------------------------
+
+    if (
+      a.dailyLoad !==
+      b.dailyLoad
+    ) {
+      return (
+        a.dailyLoad -
+        b.dailyLoad
+      );
+    }
+
+    // --------------------------------------------------------
+    // 6. Professor count
+    // --------------------------------------------------------
+
+    if (
+      a.professorCount !==
+      b.professorCount
+    ) {
+      return (
+        a.professorCount -
+        b.professorCount
+      );
+    }
+
+    // --------------------------------------------------------
+    // 7. Randomization
+    // --------------------------------------------------------
+
+    return (
+      seededShuffle(
+        `${variant}-${a.supervisorId}`,
+      ) -
+      seededShuffle(
+        `${variant}-${b.supervisorId}`,
+      )
+    );
+  });
+
+  // ==========================================================
+  // Assign
+  // ==========================================================
+
+  const selected =
+    ranked[0];
+
+  const ok =
+    assignProfessorToSupervisor(
+      professor.key,
+
+      professor.bundles,
+
+      selected.supervisorId,
+
+      result,
+
+      cand,
+
+      bundleAssignments,
+
+      professorAssignments,
+    );
+
+  if (!ok) {
+    conflicts.push({
+      type:
+        "PROFESSOR_ASSIGNMENT_FAILED",
+
+      professor:
+        professor.professor,
+
+      professor_id:
+        professor.professor_id,
+
+      supervisor_id:
+        selected.supervisorId,
+    });
+
+    console.warn(
+      `⚠️ Failed assigning professor ${professor.professor} to supervisor ${selected.supervisorId}`,
+    );
+  }
+}
 
   // ==========================================================
   // Save Assignments
