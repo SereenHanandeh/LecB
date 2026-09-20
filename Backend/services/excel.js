@@ -3373,102 +3373,244 @@ function swapProfessorsBetweenSupervisors({
   };
 }
 
-// Generate PlaN
 async function generatePlan(
   planId,
   variant = 1,
   minimumPeriodsEnabled = false,
   minimumPeriods = 4,
 ) {
-  console.log("");
-  console.log("==================================================");
-  console.log("🚀 STARTING PLAN GENERATION");
-  console.log("==================================================");
-  console.log(`🆔 Plan ID: ${planId}`);
-  console.log(`🔢 Variant: ${variant}`);
+  // ----------------------------------------------------------
+  // Support Object options
+  // ----------------------------------------------------------
 
-  // ========================================================
-  // Support object options
-  // ========================================================
-
-  if (minimumPeriodsEnabled && typeof minimumPeriodsEnabled === "object") {
+  if (
+    minimumPeriodsEnabled &&
+    typeof minimumPeriodsEnabled === "object"
+  ) {
     const options = minimumPeriodsEnabled;
 
     minimumPeriodsEnabled = Boolean(
-      options.minimumPeriodsEnabled ?? options.enabled ?? false,
+      options.minimumPeriodsEnabled ??
+        options.enabled ??
+        false,
     );
 
-    minimumPeriods = Number(options.minimumPeriods ?? options.minimum ?? 4);
+    minimumPeriods = Number(
+      options.minimumPeriods ??
+        options.minimum ??
+        4,
+    );
   }
 
-  const minimumEnabled = Boolean(minimumPeriodsEnabled);
+  const minimumEnabled = Boolean(
+    minimumPeriodsEnabled,
+  );
 
-  let minimumTarget = Number(minimumPeriods);
+  let minimumTarget = Number(
+    minimumPeriods,
+  );
 
-  if (!Number.isInteger(minimumTarget) || minimumTarget < 1) {
+  if (
+    !Number.isInteger(minimumTarget) ||
+    minimumTarget < 1
+  ) {
     minimumTarget = 4;
   }
 
+  console.log("========================================");
   console.log(
-    `🎯 Minimum Period Rule ${minimumEnabled ? "ENABLED" : "DISABLED"}.`,
+    `🚀 Generating plan ${planId}, variant ${variant}`,
+  );
+  console.log("========================================");
+
+  console.log(
+    "⚙️ Minimum periods enabled:",
+    minimumEnabled,
   );
 
-  if (minimumEnabled) {
-    console.log(`🎯 Minimum target: ${minimumTarget} periods`);
-  }
+  console.log(
+    "⚙️ Minimum periods target:",
+    minimumTarget,
+  );
 
-  // ========================================================
-  // Get plan context
-  // ========================================================
+  // ==========================================================
+  // Plan Context
+  // ==========================================================
 
-  const context = await getPlanContext(planId);
+  const ctx = await getPlanContext(planId);
 
-  if (!context) {
-    throw new Error(`Plan ${planId} not found.`);
+  if (!ctx) {
+    throw new Error(
+      `Plan ${planId} was not found.`,
+    );
   }
 
   const {
-    plan,
-    sessionGroups,
-    supervisors,
-    preassignments,
-    locks,
-    affinities,
-  } = context;
+    groups = [],
+    supervisors = [],
+    pre = [],
+    locks = [],
+    aff = [],
+  } = ctx;
 
-  // ========================================================
-  // Duty pool
-  // ========================================================
+  console.log("========================================");
+  console.log("🔎 DEBUG PLAN DATA");
+  console.log("========================================");
 
-  const dutyPool = await getDutyPool(planId);
+  console.log(
+    "📦 Groups from getPlanContext:",
+    groups.length,
+  );
 
-  const selectedSupervisorIds = (
-    dutyPool?.supervisorIds ??
-    dutyPool?.supervisor_ids ??
-    supervisors?.map((s) => s.id) ??
-    []
-  )
-    .map(Number)
-    .filter((id) => Number.isInteger(id));
+  const groupsByDate = {};
+
+  for (const group of groups) {
+    const day = dateISO(group.date);
+
+    if (!groupsByDate[day]) {
+      groupsByDate[day] = [];
+    }
+
+    groupsByDate[day].push(group);
+  }
+
+  console.log("📅 Groups by date:");
+
+  for (const [day, dayGroups] of Object.entries(
+    groupsByDate,
+  )) {
+    console.log(
+      day,
+      "=>",
+      dayGroups.length,
+    );
+  }
+
+  console.log("========================================");
+
+  // ==========================================================
+  // Validation
+  // ==========================================================
+
+  if (!groups.length) {
+    console.warn(
+      "⚠️ No session groups found for this plan.",
+    );
+
+    await saveAssignments(planId, []);
+
+    return {
+      success: true,
+      planId,
+      variant,
+
+      assigned: 0,
+      total: 0,
+
+      assignedGroups: 0,
+      totalGroups: 0,
+
+      assignedBundles: 0,
+      totalBundles: 0,
+
+      conflicts: [],
+      conflictsCount: 0,
+
+      supervisorsUsed: 0,
+
+      fairnessDifference: 0,
+
+      professorUniquenessViolations: 0,
+
+      rebalanceMoves: 0,
+      rebalanceIterations: 0,
+
+      minimumRebalanceMoves: 0,
+      minimumRebalanceIterations: 0,
+      minimumRebalanceRemainingDeficit: [],
+
+      swapMoves: 0,
+      swapIterations: 0,
+
+      minimumPeriodsEnabled: minimumEnabled,
+      minimumPeriods: minimumEnabled
+        ? minimumTarget
+        : null,
+
+      minimumsReached: false,
+      minimumStatistics: [],
+
+      statistics: [],
+      selectedSupervisors: [],
+      assignments: [],
+    };
+  }
+
+  if (!supervisors.length) {
+    throw new Error(
+      "No supervisors are available for this plan.",
+    );
+  }
+
+  // ==========================================================
+  // Duty Pool
+  // ==========================================================
+
+  let selectedSupervisorIds = [];
+
+  try {
+    const dutyPool = await getDutyPool(planId);
+
+    if (
+      Array.isArray(dutyPool) &&
+      dutyPool.length
+    ) {
+      selectedSupervisorIds =
+        dutyPool
+          .map((item) =>
+            Number(
+              item.supervisor_id ??
+                item.supervisorId ??
+                item.id,
+            ),
+          )
+          .filter(Number.isFinite);
+    }
+  } catch (error) {
+    console.warn(
+      "⚠️ Could not load duty pool. Falling back to active supervisors.",
+    );
+  }
 
   if (!selectedSupervisorIds.length) {
-    throw new Error("No supervisors selected for this plan.");
+    selectedSupervisorIds =
+      supervisors
+        .map((s) => Number(s.id))
+        .filter(Number.isFinite);
   }
+
+  selectedSupervisorIds = Array.from(
+    new Set(selectedSupervisorIds),
+  );
 
   console.log(
     `👥 Selected supervisors: ${selectedSupervisorIds.length}`,
     selectedSupervisorIds,
   );
 
-  // ========================================================
-  // Candidate state
-  // ========================================================
+  if (!selectedSupervisorIds.length) {
+    throw new Error(
+      "No supervisors were selected for this plan.",
+    );
+  }
+
+  // ==========================================================
+  // Candidate State
+  // ==========================================================
 
   const cand = {};
 
-  for (const supervisorId of selectedSupervisorIds) {
-    const id = Number(supervisorId);
-
+  for (const id of selectedSupervisorIds) {
     cand[id] = {
       id,
 
@@ -3490,448 +3632,803 @@ async function generatePlan(
     };
   }
 
-  // ========================================================
-  // Result containers
-  // ========================================================
+  if (minimumEnabled) {
+    console.log(
+      `🎯 Minimum Period Rule ENABLED: Every selected supervisor should receive at least ${minimumTarget} periods when feasible.`,
+    );
+  } else {
+    console.log(
+      "🎯 Minimum Period Rule DISABLED.",
+    );
+  }
+
+  // ==========================================================
+  // Affinities
+  // ==========================================================
+
+  const professorAffinity = new Map();
+
+  const professorNameAffinity = new Map();
+
+  console.log("========================================");
+  console.log(
+    "🔗 LOADING PROFESSOR AFFINITIES",
+  );
+  console.log("========================================");
+
+  console.log(
+    "Affinity rows from DB:",
+    aff.length,
+  );
+
+  // ==========================================================
+  // Result
+  // ==========================================================
 
   const result = [];
 
+  const conflicts = [];
+
   const bundleAssignments = new Map();
 
-  const professorAssignments = new Map();
+  // ==========================================================
+  // Load Affinities
+  // ==========================================================
 
-  // ========================================================
-  // Affinity maps
-  // ========================================================
-
-  const affinityByProfessorId = new Map();
-
-  const affinityByProfessorName = new Map();
-
-  if (Array.isArray(affinities)) {
-    for (const affinity of affinities) {
-      const supervisorId = Number(
-        affinity.supervisor_id ?? affinity.supervisorId,
-      );
-
-      if (!Number.isInteger(supervisorId)) {
-        continue;
-      }
-
-      const professorId = affinity.professor_id ?? affinity.professorId;
-
-      const professorName =
-        affinity.professor_name ?? affinity.professorName ?? affinity.name;
-
-      if (professorId !== undefined && professorId !== null) {
-        affinityByProfessorId.set(String(professorId), supervisorId);
-      }
-
-      if (professorName) {
-        affinityByProfessorName.set(
-          getProfessorNameKey(professorName),
-          supervisorId,
-        );
-      }
-    }
-  }
-
-  // ========================================================
-  // Normalize session groups
-  // ========================================================
-
-  const normalizedGroups = Array.isArray(sessionGroups) ? sessionGroups : [];
-
-  console.log(`📦 Total CRNs / groups: ${normalizedGroups.length}`);
-
-  // ========================================================
-  // Build bundles
-  //
-  // Bundle:
-  // Professor + Date + Period
-  //
-  // Every group inside same bundle must stay together.
-  // ========================================================
-
-  const bundlesMap = new Map();
-
-  for (const row of normalizedGroups) {
-    const professorKey = getProfessorKey(row);
-
-    const professorName =
-      row.professor_name ??
-      row.professorName ??
-      row.Professor ??
-      row.professor ??
-      "";
-
-    const day = dateISO(row.date ?? row.Date ?? row.DATE ?? row.day ?? row.Day);
-
-    const period = normalizePeriod(
-      row.period ?? row.Period ?? row.period_name ?? row.periodName,
+  for (const item of aff) {
+    const supervisorId = Number(
+      item.supervisor_id ??
+        item.supervisorId,
     );
 
-    if (!professorKey || !day || !period) {
-      console.warn("⚠️ Skipping invalid row:", row);
+    if (!Number.isFinite(supervisorId)) {
+      console.warn(
+        "⚠️ Affinity skipped: invalid supervisor ID",
+        item,
+      );
 
       continue;
     }
 
-    const bundleKey = `${day}|${professorKey}|${period}`;
+    if (!cand[supervisorId]) {
+      conflicts.push({
+        type:
+          "AFFINITY_SUPERVISOR_NOT_SELECTED",
 
-    if (!bundlesMap.has(bundleKey)) {
-      bundlesMap.set(bundleKey, {
-        key: bundleKey,
+        professor:
+          item.professor_name ??
+          item.name ??
+          "",
 
-        professorKey,
+        professor_id:
+          item.professor_id ?? null,
 
+        supervisor_id: supervisorId,
+
+        message:
+          "The affinity supervisor is not in the selected Duty Pool.",
+      });
+
+      continue;
+    }
+
+    const professorId = Number(
+      item.professor_id ??
+        item.professorId ??
+        null,
+    );
+
+    if (Number.isFinite(professorId)) {
+      professorAffinity.set(
+        professorId,
+        supervisorId,
+      );
+    }
+
+    const professorName = String(
+      item.professor_name ??
+        item.name ??
+        "",
+    )
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+
+    if (professorName) {
+      professorNameAffinity.set(
         professorName,
+        supervisorId,
+      );
+    }
 
-        date: day,
+    console.log(
+      `🔗 Affinity loaded: "${professorName}" -> Supervisor ${supervisorId}`,
+    );
+  }
 
-        period,
+  console.log(
+    `🔗 Professor ID affinities: ${professorAffinity.size}`,
+  );
+
+  console.log(
+    `🔗 Professor name affinities: ${professorNameAffinity.size}`,
+  );
+
+  // ==========================================================
+  // Build Bundles
+  // ==========================================================
+
+  const bundlesMap = new Map();
+
+  for (const group of groups) {
+    const key = getBundleKey(group);
+
+    if (!bundlesMap.has(key)) {
+      bundlesMap.set(key, {
+        key,
+
+        date: dateISO(group.date),
+
+        period: normalizePeriod(
+          group.period_label,
+        ),
+
+        professor_id:
+          group.professor_id ?? null,
+
+        professor:
+          group.professor_name ??
+          group.professor ??
+          "",
+
+        professor_name:
+          group.professor_name ??
+          group.professor ??
+          "",
+
+        professorKey:
+          getProfessorKey(group),
+
+        professorNameKey:
+          getProfessorNameKey(group),
 
         groups: [],
       });
     }
 
-    bundlesMap.get(bundleKey).groups.push(row);
+    bundlesMap
+      .get(key)
+      .groups.push(group);
   }
 
-  const bundles = Array.from(bundlesMap.values());
+  const bundles =
+    Array.from(
+      bundlesMap.values(),
+    );
 
-  console.log(`📦 Total Professor + Date + Period bundles: ${bundles.length}`);
+  console.log(
+    `📦 Total CRNs / groups: ${groups.length}`,
+  );
 
-  // ========================================================
-  // Group bundles by professor
-  // ========================================================
+  console.log(
+    `📦 Total Professor + Date + Period bundles: ${bundles.length}`,
+  );
 
-  const professorMap = new Map();
+  // ==========================================================
+  // Group By Professor
+  // ==========================================================
+
+  const professorsMap = new Map();
 
   for (const bundle of bundles) {
-    if (!professorMap.has(bundle.professorKey)) {
-      professorMap.set(bundle.professorKey, {
-        key: bundle.professorKey,
+    const key = bundle.professorKey;
+
+    if (!professorsMap.has(key)) {
+      professorsMap.set(key, {
+        key,
 
         professor_id:
-          bundle.groups?.[0]?.professor_id ??
-          bundle.groups?.[0]?.professorId ??
-          null,
+          bundle.professor_id,
 
-        professor_name: bundle.professorName,
+        professor:
+          bundle.professor,
+
+        professorNameKey:
+          bundle.professorNameKey,
 
         bundles: [],
       });
     }
 
-    professorMap.get(bundle.professorKey).bundles.push(bundle);
+    professorsMap
+      .get(key)
+      .bundles.push(bundle);
   }
 
-  const professorGroups = Array.from(professorMap.values());
+  const professorGroups =
+    Array.from(
+      professorsMap.values(),
+    );
 
-  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
-
-  // ========================================================
-  // Sort bundles inside each professor
-  // ========================================================
+  // ==========================================================
+  // Sort Bundles
+  // ==========================================================
 
   for (const professor of professorGroups) {
-    professor.bundles.sort((a, b) => {
-      const dateCompare = String(a.date).localeCompare(String(b.date));
+    professor.bundles.sort(
+      (a, b) => {
+        const dateCompare =
+          String(a.date).localeCompare(
+            String(b.date),
+          );
 
-      if (dateCompare !== 0) {
-        return dateCompare;
-      }
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
 
-      return getPeriodRank(a.period) - getPeriodRank(b.period);
-    });
+        return sortPeriods(
+          a.period,
+          b.period,
+        );
+      },
+    );
   }
 
-  // ========================================================
-  // Sort professors
-  //
-  // Larger professors first.
-  // This is the existing basic assignment strategy.
-  // ========================================================
+  // ==========================================================
+  // Sort Professors By Workload
+  // ==========================================================
 
-  professorGroups.sort((a, b) => b.bundles.length - a.bundles.length);
+  professorGroups.sort((a, b) => {
+    if (
+      b.bundles.length !==
+      a.bundles.length
+    ) {
+      return (
+        b.bundles.length -
+        a.bundles.length
+      );
+    }
 
-  // ========================================================
-  // Preassignment / locks
-  // ========================================================
+    return String(
+      a.professor,
+    ).localeCompare(
+      String(b.professor),
+      "ar",
+    );
+  });
 
-  const forcedProfessorAssignments = new Map();
+  console.log(
+    `👨‍🏫 Unique professors: ${professorGroups.length}`,
+  );
 
-  // ========================================================
-  // Helper:
-  // Register forced assignment
-  // ========================================================
+  // ==========================================================
+  // Professor Assignments
+  // ==========================================================
 
-  const registerForcedAssignment = (professorKey, supervisorId, reason) => {
-    const sid = Number(supervisorId);
+  const professorAssignments =
+    new Map();
 
-    if (!selectedSupervisorIds.includes(sid)) {
-      console.warn(
-        `⚠️ Forced assignment ignored. Supervisor ${sid} is not in duty pool.`,
+  // ==========================================================
+  // Forced Assignments
+  // ==========================================================
+
+  const forcedProfessorAssignments =
+    new Map();
+
+  function registerForcedProfessor(
+    group,
+    supervisorId,
+    source,
+  ) {
+    const professorKey =
+      getProfessorKey(group);
+
+    const id = Number(
+      supervisorId,
+    );
+
+    if (!Number.isFinite(id)) {
+      return;
+    }
+
+    if (!cand[id]) {
+      conflicts.push({
+        type:
+          "SUPERVISOR_NOT_SELECTED",
+
+        professor:
+          group.professor_name ??
+          group.professor ??
+          "",
+
+        professor_id:
+          group.professor_id ?? null,
+
+        supervisor_id: id,
+
+        source,
+
+        message:
+          "The required supervisor is not in the selected Duty Pool.",
+      });
+
+      return;
+    }
+
+    if (
+      !forcedProfessorAssignments.has(
+        professorKey,
+      )
+    ) {
+      forcedProfessorAssignments.set(
+        professorKey,
+        {
+          supervisorId: id,
+          source,
+        },
       );
 
       return;
     }
 
-    const existing = forcedProfessorAssignments.get(professorKey);
-
-    if (existing !== undefined && Number(existing) !== sid) {
-      throw new Error(
-        `Professor ${professorKey} has conflicting forced supervisors: ${existing} and ${sid}.`,
+    const existing =
+      forcedProfessorAssignments.get(
+        professorKey,
       );
-    }
-
-    forcedProfessorAssignments.set(professorKey, sid);
-
-    console.log(
-      `🔒 Forced professor ${professorKey} -> Supervisor ${sid} (${reason})`,
-    );
-  };
-
-  // ========================================================
-  // Load affinities as forced assignments
-  // ========================================================
-
-  for (const professor of professorGroups) {
-    let affinitySupervisor = null;
 
     if (
-      professor.professor_id !== null &&
-      professor.professor_id !== undefined
+      Number(existing.supervisorId) === id
     ) {
-      affinitySupervisor = affinityByProfessorId.get(
-        String(professor.professor_id),
+      return;
+    }
+
+    conflicts.push({
+      type:
+        "PROFESSOR_MULTIPLE_SUPERVISORS",
+
+      professor:
+        group.professor_name ??
+        group.professor ??
+        "",
+
+      professor_id:
+        group.professor_id ?? null,
+
+      supervisor_1:
+        existing.supervisorId,
+
+      supervisor_2: id,
+
+      message:
+        `Professor is forced to two different supervisors by ${existing.source} and ${source}.`,
+    });
+  }
+
+  // ==========================================================
+  // Locks
+  // ==========================================================
+
+  for (const lock of locks) {
+    const sessionGroupId =
+      Number(
+        lock.session_group_id ??
+          lock.sessionGroupId,
       );
-    }
 
-    if (affinitySupervisor === undefined || affinitySupervisor === null) {
-      affinitySupervisor = affinityByProfessorName.get(
-        getProfessorNameKey(professor.professor_name),
+    const supervisorId =
+      Number(
+        lock.supervisor_id ??
+          lock.supervisorId,
       );
-    }
 
-    if (affinitySupervisor !== undefined && affinitySupervisor !== null) {
-      registerForcedAssignment(professor.key, affinitySupervisor, "affinity");
-    }
-  }
-
-  // ========================================================
-  // Load preassignments
-  // ========================================================
-
-  if (Array.isArray(preassignments)) {
-    for (const pre of preassignments) {
-      const professorKey =
-        pre.professor_key ?? pre.professorKey ?? getProfessorKey(pre);
-
-      const supervisorId = pre.supervisor_id ?? pre.supervisorId;
-
-      if (professorKey && supervisorId !== undefined && supervisorId !== null) {
-        registerForcedAssignment(professorKey, supervisorId, "preassignment");
-      }
-    }
-  }
-
-  // ========================================================
-  // Load locks
-  // ========================================================
-
-  if (Array.isArray(locks)) {
-    for (const lock of locks) {
-      const professorKey =
-        lock.professor_key ?? lock.professorKey ?? getProfessorKey(lock);
-
-      const supervisorId = lock.supervisor_id ?? lock.supervisorId;
-
-      if (professorKey && supervisorId !== undefined && supervisorId !== null) {
-        registerForcedAssignment(professorKey, supervisorId, "lock");
-      }
-    }
-  }
-
-  console.log(`🔒 Forced professors: ${forcedProfessorAssignments.size}`);
-
-  // ========================================================
-  // Helper:
-  // Get forced supervisor
-  // ========================================================
-
-  const getForcedSupervisor = (professorKey) =>
-    forcedProfessorAssignments.get(professorKey);
-
-  // ========================================================
-  // Assign forced professors first
-  // ========================================================
-
-  console.log("");
-  console.log("==================================================");
-  console.log("🔒 APPLYING FORCED PROFESSOR ASSIGNMENTS");
-  console.log("==================================================");
-
-  for (const professor of professorGroups) {
-    const forcedSupervisorId = getForcedSupervisor(professor.key);
-
-    if (forcedSupervisorId === undefined || forcedSupervisorId === null) {
+    if (
+      !Number.isFinite(
+        sessionGroupId,
+      ) ||
+      !Number.isFinite(
+        supervisorId,
+      )
+    ) {
       continue;
     }
 
-    const supervisor = cand[Number(forcedSupervisorId)];
-
-    if (!supervisor) {
-      throw new Error(
-        `Forced supervisor ${forcedSupervisorId} does not exist in candidate state.`,
-      );
-    }
-
-    const canTake = canSupervisorTakeProfessor(supervisor, professor.bundles);
-
-    if (!canTake) {
-      throw new Error(
-        `Forced assignment for professor ${professor.key} violates assignment rules.`,
-      );
-    }
-
-    const assigned = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      Number(forcedSupervisorId),
-      result,
-      cand,
-      bundleAssignments,
-      professorAssignments,
+    const group = groups.find(
+      (g) =>
+        Number(g.id) ===
+        sessionGroupId,
     );
 
-    if (!assigned) {
-      throw new Error(
-        `Failed to apply forced assignment for professor ${professor.key}.`,
-      );
+    if (!group) {
+      continue;
     }
 
-    console.log(
-      `🔒 Professor assigned completely: ${professor.key} -> Supervisor ${forcedSupervisorId}`,
+    registerForcedProfessor(
+      group,
+      supervisorId,
+      "lock",
     );
   }
 
-  // ========================================================
-  // NORMAL BASIC PROFESSOR ASSIGNMENT
-  //
-  // IMPORTANT:
-  // This section intentionally remains the basic
-  // professor assignment logic.
-  // ========================================================
+  // ==========================================================
+  // Preassignments
+  // ==========================================================
 
-  console.log("");
-  console.log("==================================================");
-  console.log("⚖️ STARTING NORMAL FAIR DISTRIBUTION");
-  console.log("==================================================");
+  for (const item of pre) {
+    const sessionGroupId =
+      Number(
+        item.session_group_id ??
+          item.sessionGroupId,
+      );
 
-  // ========================================================
-  // Remaining professors
-  // ========================================================
+    const supervisorId =
+      Number(
+        item.supervisor_id ??
+          item.supervisorId,
+      );
 
-  const remainingProfessors = professorGroups.filter(
-    (professor) => !professorAssignments.has(professor.key),
+    if (
+      !Number.isFinite(
+        sessionGroupId,
+      ) ||
+      !Number.isFinite(
+        supervisorId,
+      )
+    ) {
+      continue;
+    }
+
+    const group = groups.find(
+      (g) =>
+        Number(g.id) ===
+        sessionGroupId,
+    );
+
+    if (!group) {
+      continue;
+    }
+
+    registerForcedProfessor(
+      group,
+      supervisorId,
+      "preassignment",
+    );
+  }
+
+  // ==========================================================
+  // Apply Professor Affinities
+  // ==========================================================
+
+  for (const professor of professorGroups) {
+    let affinitySupervisor =
+      null;
+
+    if (
+      professor.professor_id !==
+        null &&
+      professor.professor_id !==
+        undefined
+    ) {
+      affinitySupervisor =
+        professorAffinity.get(
+          Number(
+            professor.professor_id,
+          ),
+        );
+    }
+
+    if (
+      affinitySupervisor ===
+        null ||
+      affinitySupervisor ===
+        undefined
+    ) {
+      affinitySupervisor =
+        professorNameAffinity.get(
+          professor.professorNameKey,
+        );
+    }
+
+    if (
+      affinitySupervisor !==
+        null &&
+      affinitySupervisor !==
+        undefined
+    ) {
+      const supervisorId =
+        Number(
+          affinitySupervisor,
+        );
+
+      console.log(
+        `🎯 AFFINITY FOUND: Professor "${professor.professor}" -> Supervisor ${supervisorId}`,
+      );
+
+      if (!cand[supervisorId]) {
+        conflicts.push({
+          type:
+            "AFFINITY_SUPERVISOR_NOT_SELECTED",
+
+          professor:
+            professor.professor,
+
+          professor_id:
+            professor.professor_id,
+
+          supervisor_id:
+            supervisorId,
+
+          message:
+            "The affinity supervisor is not part of the selected Duty Pool.",
+        });
+
+        continue;
+      }
+
+      const forced =
+        forcedProfessorAssignments.get(
+          professor.key,
+        );
+
+      if (
+        forced &&
+        Number(
+          forced.supervisorId,
+        ) !== supervisorId
+      ) {
+        console.warn(
+          `⚠️ Professor affinity conflicts with forced assignment: ${professor.professor}`,
+        );
+
+        conflicts.push({
+          type:
+            "AFFINITY_FORCED_CONFLICT",
+
+          professor:
+            professor.professor,
+
+          professor_id:
+            professor.professor_id,
+
+          affinity_supervisor:
+            supervisorId,
+
+          forced_supervisor:
+            forced.supervisorId,
+        });
+
+        continue;
+      }
+
+      forcedProfessorAssignments.set(
+        professor.key,
+        {
+          supervisorId,
+          source: "affinity",
+        },
+      );
+
+      console.log(
+        `🔒 Professor "${professor.professor}" FORCED to Supervisor ${supervisorId}`,
+      );
+    }
+  }
+
+  // ==========================================================
+  // Forced Professors FIRST
+  // ==========================================================
+
+  for (const professor of professorGroups) {
+    const forced =
+      forcedProfessorAssignments.get(
+        professor.key,
+      );
+
+    if (!forced) {
+      continue;
+    }
+
+    const supervisor =
+      cand[
+        Number(
+          forced.supervisorId,
+        )
+      ];
+
+    if (!supervisor) {
+      conflicts.push({
+        type:
+          "SUPERVISOR_NOT_FOUND",
+
+        professor:
+          professor.professor,
+
+        supervisor_id:
+          forced.supervisorId,
+      });
+
+      continue;
+    }
+
+    const ok =
+      assignProfessorToSupervisor(
+        professor.key,
+        professor.bundles,
+        forced.supervisorId,
+        result,
+        cand,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+    if (!ok) {
+      conflicts.push({
+        type:
+          "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
+
+        professor:
+          professor.professor,
+
+        professor_id:
+          professor.professor_id,
+
+        supervisor_id:
+          forced.supervisorId,
+
+        periods:
+          professor.bundles.length,
+
+        message:
+          "The professor cannot fit completely into the forced supervisor because of period conflicts.",
+      });
+    }
+  }
+
+  // ==========================================================
+  // Shuffle Helper
+  // ==========================================================
+
+  const shuffle = (arr) =>
+    seededShuffle(
+      [...arr],
+      Number(variant) || 1,
+    );
+
+  // ==========================================================
+  // Remaining Professors
+  // ==========================================================
+
+  console.log("========================================");
+  console.log(
+    "⚖️ STARTING NORMAL FAIR DISTRIBUTION",
   );
+  console.log("========================================");
 
-  // ========================================================
-  // Basic assignment
-  // ========================================================
+  for (const professor of professorGroups) {
+    if (
+      professorAssignments.has(
+        professor.key,
+      )
+    ) {
+      continue;
+    }
 
-  for (const professor of remainingProfessors) {
-    let bestCandidate = null;
+    const allMinimumsReached =
+      hasReachedAllMinimums(
+        cand,
+        selectedSupervisorIds,
+        minimumEnabled,
+        minimumTarget,
+      );
+
+    const ranked = [];
 
     for (const supervisorId of selectedSupervisorIds) {
-      const supervisor = cand[Number(supervisorId)];
+      const supervisor =
+        cand[supervisorId];
 
       if (!supervisor) {
         continue;
       }
 
-      // ----------------------------------------------------
-      // Hard rules
-      // ----------------------------------------------------
-
-      const canTake = canSupervisorTakeProfessor(supervisor, professor.bundles);
-
-      if (!canTake) {
+      if (
+        !canSupervisorTakeProfessor(
+          supervisor,
+          professor.bundles,
+        )
+      ) {
         continue;
       }
 
-      // ----------------------------------------------------
-      // Current workload
-      // ----------------------------------------------------
+      const workload =
+        professor.bundles.length;
 
-      const currentTotal = Number(supervisor.total || 0);
+      const currentTotal =
+        Number(
+          supervisor.total || 0,
+        );
 
-      const projectedTotal = currentTotal + professor.bundles.length;
+      const projectedTotal =
+        currentTotal + workload;
 
-      // ----------------------------------------------------
-      // Minimum information
-      //
-      // Used only by the existing basic assignment
-      // scoring path.
-      //
-      // Actual minimum redistribution happens later
-      // in Minimum Rebalance Engine.
-      // ----------------------------------------------------
-      const minimumInfo = getMinimumInfo(
+      const minimumInfo =
+        getMinimumInfo(
+          supervisor,
+          workload,
+          minimumEnabled,
+          minimumTarget,
+        );
+
+      const consecutiveScore =
+        getProfessorConsecutiveScore(
+          supervisor,
+          professor.bundles,
+        );
+
+      const periodContinuityScore =
+        getPeriodContinuityScore(
+          supervisor,
+          professor.bundles,
+        );
+
+      const continuityPriority =
+        getContinuityPriority(
+          supervisor,
+          professor.bundles,
+        );
+
+      const dailyLoad =
+        getProfessorDailyLoad(
+          supervisor,
+          professor.bundles,
+        );
+
+      const professorCount =
+        supervisor
+          .assignedProfessors
+          ?.size || 0;
+
+      const noProfessorYet =
+        professorCount === 0;
+
+      let score =
+        periodContinuityScore *
+          1000000 +
+        continuityPriority *
+          1000 +
+        (noProfessorYet
+          ? 100000000
+          : 0) -
+        projectedTotal *
+          10000 -
+        dailyLoad * 2;
+
+      if (
+        minimumEnabled &&
+        minimumInfo.needsMinimum &&
+        !allMinimumsReached
+      ) {
+        score +=
+          1000000000 +
+          minimumInfo.deficit *
+            1000000;
+
+        if (
+          minimumInfo.reachesMinimum
+        ) {
+          score += 50000000;
+        }
+      }
+
+      ranked.push({
         supervisor,
-        professor.bundles.length,
-        minimumEnabled,
-        minimumTarget,
-      );
 
-      // ----------------------------------------------------
-      // Continuity
-      // ----------------------------------------------------
+        supervisorId,
 
-      const continuityScore = getProfessorConsecutiveScore(
-        supervisor,
-        professor.bundles,
-      );
-
-      const periodContinuityScore = getPeriodContinuityScore(
-        supervisor,
-        professor.bundles,
-      );
-
-      const continuityPriority = getContinuityPriority(
-        supervisor,
-        professor.bundles,
-      );
-
-      const dailyLoad = getProfessorDailyLoad(supervisor, professor.bundles);
-
-      // ----------------------------------------------------
-      // Existing score
-      // ----------------------------------------------------
-
-      const score =
-        (minimumInfo?.score ?? 0) +
-        continuityScore +
-        periodContinuityScore +
-        continuityPriority -
-        dailyLoad;
-
-      // ----------------------------------------------------
-      // Candidate object
-      // ----------------------------------------------------
-
-      const candidate = {
-        supervisorId: Number(supervisorId),
-
-        score,
+        currentTotal,
 
         projectedTotal,
 
-        minimumInfo,
-
-        continuityScore,
+        consecutiveScore,
 
         periodContinuityScore,
 
@@ -3939,583 +4436,929 @@ async function generatePlan(
 
         dailyLoad,
 
-        professorCount: Number(supervisor.assignedProfessors?.size || 0),
+        professorCount,
 
-        random: Math.random(),
-      };
+        minimumEnabled,
 
-      // ----------------------------------------------------
-      // Existing comparator
-      //
-      // Keep the basic assignment philosophy:
-      // minimum / projected total / continuity /
-      // fairness.
-      // ----------------------------------------------------
+        minimumTarget,
 
-      if (!bestCandidate) {
-        bestCandidate = candidate;
+        needsMinimum:
+          minimumInfo.needsMinimum,
 
-        continue;
-      }
+        minimumDeficit:
+          minimumInfo.deficit,
 
-      // ----------------------------------------------------
-      // Minimum preference
-      //
-      // Only when enabled.
-      // ----------------------------------------------------
+        projectedMinimumDeficit:
+          minimumInfo.projectedDeficit,
 
+        reachesMinimum:
+          minimumInfo.reachesMinimum,
+
+        score,
+      });
+    }
+
+    if (!ranked.length) {
+      conflicts.push({
+        type:
+          "NO_SUPERVISOR_FOR_PROFESSOR",
+
+        professor:
+          professor.professor,
+
+        professor_id:
+          professor.professor_id,
+
+        periods:
+          professor.bundles.length,
+
+        message:
+          "No single supervisor can take all periods of this professor without a same-period conflict.",
+      });
+
+      console.warn(
+        "⚠️ No supervisor can take entire professor:",
+        professor.professor,
+      );
+
+      continue;
+    }
+
+    // ========================================================
+    // SORT
+    // ========================================================
+
+    ranked.sort((a, b) => {
       if (minimumEnabled) {
-        const currentBelow =
-          Number(cand[bestCandidate.supervisorId]?.total || 0) < minimumTarget;
+        const aNeedsMinimum =
+          a.currentTotal <
+          minimumTarget;
 
-        const candidateBelow = currentTotal < minimumTarget;
+        const bNeedsMinimum =
+          b.currentTotal <
+          minimumTarget;
 
-        if (candidateBelow !== currentBelow) {
-          if (!candidateBelow) {
-            bestCandidate = candidate;
+        if (
+          aNeedsMinimum !==
+          bNeedsMinimum
+        ) {
+          return aNeedsMinimum
+            ? -1
+            : 1;
+        }
+
+        if (
+          aNeedsMinimum &&
+          bNeedsMinimum
+        ) {
+          if (
+            a.minimumDeficit !==
+            b.minimumDeficit
+          ) {
+            return (
+              b.minimumDeficit -
+              a.minimumDeficit
+            );
           }
 
-          continue;
+          if (
+            a.projectedMinimumDeficit !==
+            b.projectedMinimumDeficit
+          ) {
+            return (
+              a.projectedMinimumDeficit -
+              b.projectedMinimumDeficit
+            );
+          }
+
+          if (
+            a.reachesMinimum !==
+            b.reachesMinimum
+          ) {
+            return a.reachesMinimum
+              ? -1
+              : 1;
+          }
         }
       }
-
-      // ----------------------------------------------------
-      // Projected total
-      // ----------------------------------------------------
-
-      if (candidate.projectedTotal !== bestCandidate.projectedTotal) {
-        if (candidate.projectedTotal < bestCandidate.projectedTotal) {
-          bestCandidate = candidate;
-        }
-
-        continue;
-      }
-
-      // ----------------------------------------------------
-      // Period continuity
-      // ----------------------------------------------------
 
       if (
-        candidate.periodContinuityScore !== bestCandidate.periodContinuityScore
+        a.projectedTotal !==
+        b.projectedTotal
       ) {
-        if (
-          candidate.periodContinuityScore > bestCandidate.periodContinuityScore
-        ) {
-          bestCandidate = candidate;
-        }
-
-        continue;
+        return (
+          a.projectedTotal -
+          b.projectedTotal
+        );
       }
 
-      // ----------------------------------------------------
-      // Continuity priority
-      // ----------------------------------------------------
-
-      if (candidate.continuityPriority !== bestCandidate.continuityPriority) {
-        if (candidate.continuityPriority > bestCandidate.continuityPriority) {
-          bestCandidate = candidate;
-        }
-
-        continue;
+      if (
+        a.periodContinuityScore !==
+        b.periodContinuityScore
+      ) {
+        return (
+          b.periodContinuityScore -
+          a.periodContinuityScore
+        );
       }
 
-      // ----------------------------------------------------
-      // Consecutive score
-      // ----------------------------------------------------
-
-      if (candidate.continuityScore !== bestCandidate.continuityScore) {
-        if (candidate.continuityScore > bestCandidate.continuityScore) {
-          bestCandidate = candidate;
-        }
-
-        continue;
+      if (
+        a.continuityPriority !==
+        b.continuityPriority
+      ) {
+        return (
+          b.continuityPriority -
+          a.continuityPriority
+        );
       }
 
-      // ----------------------------------------------------
-      // Daily load
-      // ----------------------------------------------------
-
-      if (candidate.dailyLoad !== bestCandidate.dailyLoad) {
-        if (candidate.dailyLoad < bestCandidate.dailyLoad) {
-          bestCandidate = candidate;
-        }
-
-        continue;
+      if (
+        a.consecutiveScore !==
+        b.consecutiveScore
+      ) {
+        return (
+          b.consecutiveScore -
+          a.consecutiveScore
+        );
       }
 
-      // ----------------------------------------------------
-      // Professor count
-      // ----------------------------------------------------
-
-      if (candidate.professorCount !== bestCandidate.professorCount) {
-        if (candidate.professorCount < bestCandidate.professorCount) {
-          bestCandidate = candidate;
-        }
-
-        continue;
+      if (
+        a.dailyLoad !==
+        b.dailyLoad
+      ) {
+        return (
+          a.dailyLoad -
+          b.dailyLoad
+        );
       }
 
-      // ----------------------------------------------------
-      // Seeded/random tie breaker
-      // ----------------------------------------------------
-
-      if (candidate.random < bestCandidate.random) {
-        bestCandidate = candidate;
+      if (
+        a.professorCount !==
+        b.professorCount
+      ) {
+        return (
+          a.professorCount -
+          b.professorCount
+        );
       }
-    }
 
-    // ======================================================
-    // No candidate
-    // ======================================================
+      return (
+        seededShuffle(
+          `${variant}-${a.supervisorId}`,
+        ) -
+        seededShuffle(
+          `${variant}-${b.supervisorId}`,
+        )
+      );
+    });
 
-    if (!bestCandidate) {
-      throw new Error(
-        `Unable to assign professor ${professor.key} to any selected supervisor.`,
+    if (
+      ranked[0]
+        .periodContinuityScore !==
+        0 ||
+      ranked[0].needsMinimum
+    ) {
+      console.log(
+        "🏆 SELECTED SUPERVISOR:",
+        {
+          professor:
+            professor.professor,
+
+          supervisor:
+            ranked[0].supervisorId,
+
+          currentTotal:
+            ranked[0].currentTotal,
+
+          projectedTotal:
+            ranked[0].projectedTotal,
+
+          minimumEnabled:
+            ranked[0].minimumEnabled,
+
+          minimumTarget:
+            ranked[0].minimumTarget,
+
+          needsMinimum:
+            ranked[0].needsMinimum,
+
+          minimumDeficit:
+            ranked[0].minimumDeficit,
+
+          projectedMinimumDeficit:
+            ranked[0]
+              .projectedMinimumDeficit,
+
+          reachesMinimum:
+            ranked[0]
+              .reachesMinimum,
+
+          periodContinuityScore:
+            ranked[0]
+              .periodContinuityScore,
+
+          continuityPriority:
+            ranked[0]
+              .continuityPriority,
+
+          consecutiveScore:
+            ranked[0]
+              .consecutiveScore,
+
+          dailyLoad:
+            ranked[0].dailyLoad,
+        },
       );
     }
 
-    // ======================================================
-    // Assign whole professor
-    // ======================================================
+    const selected =
+      ranked[0];
 
-    const assigned = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      bestCandidate.supervisorId,
-      result,
+    const ok =
+      assignProfessorToSupervisor(
+        professor.key,
+        professor.bundles,
+        selected.supervisorId,
+        result,
+        cand,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+    if (!ok) {
+      conflicts.push({
+        type:
+          "PROFESSOR_ASSIGNMENT_FAILED",
+
+        professor:
+          professor.professor,
+
+        professor_id:
+          professor.professor_id,
+
+        supervisor_id:
+          selected.supervisorId,
+      });
+
+      console.warn(
+        `⚠️ Failed assigning professor ${professor.professor} to supervisor ${selected.supervisorId}`,
+      );
+    }
+  }
+
+  // ==========================================================
+  // Rebalance Engine
+  // ==========================================================
+
+  const rebalanceResult =
+    rebalanceAssignments({
       cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
       bundleAssignments,
       professorAssignments,
-    );
-
-    if (!assigned) {
-      throw new Error(
-        `Failed to assign professor ${professor.key} to supervisor ${bestCandidate.supervisorId}.`,
-      );
-    }
-
-    console.log(
-      `👨‍🏫 Professor assigned completely: ${professor.key} -> Supervisor ${bestCandidate.supervisorId}`,
-    );
-  }
-
-  // ========================================================
-  // Verify normal assignment
-  // ========================================================
-
-  rebuildCandidateState(
-    cand,
-    bundles,
-    professorGroups,
-    bundleAssignments,
-    professorAssignments,
-    result,
-  );
-
-  // ========================================================
-  // Basic assignment statistics
-  // ========================================================
-
-  console.log("");
-  console.log("==================================================");
-  console.log("📊 BASIC ASSIGNMENT COMPLETE");
-  console.log("==================================================");
-
-  for (const supervisorId of selectedSupervisorIds) {
-    console.log(
-      `👤 Supervisor ${supervisorId}: ${
-        cand[supervisorId]?.total ?? 0
-      } periods`,
-    );
-  }
-
-  // ========================================================
-  // REBALANCE ENGINE
-  //
-  // Existing fairness rebalance.
-  //
-  // IMPORTANT:
-  // This happens AFTER Basic Professor Assignment.
-  // ========================================================
-
-  console.log("");
-  console.log("==================================================");
-  console.log("⚖️ STARTING REBALANCE ENGINE");
-  console.log("==================================================");
-
-  const rebalanceResult = rebalanceAssignments({
-    cand,
-
-    selectedSupervisorIds,
-
-    professorGroups,
-
-    bundles,
-
-    result,
-
-    bundleAssignments,
-
-    professorAssignments,
-
-    forcedProfessorAssignments,
-
-    minimumEnabled,
-
-    minimumTarget,
-
-    variant,
-  });
-
-  console.log("🔄 Rebalance result:", rebalanceResult);
-
-  // ========================================================
-  // MINIMUM REBALANCE ENGINE
-  //
-  // IMPORTANT:
-  // This is the actual post-processing minimum engine.
-  //
-  // Example:
-  //
-  // Before:
-  // 7, 6, 4, 4, 4, 4, 2, 4
-  //
-  // Minimum = 4
-  //
-  // Possible result:
-  // 5, 6, 4, 4, 4, 4, 4, 4
-  //
-  // ========================================================
-
-  console.log("");
-  console.log("==================================================");
-  console.log("🎯 MINIMUM REBALANCE");
-  console.log("==================================================");
-
-  console.log("🔥🔥🔥 MINIMUM REBALANCE TEST MARKER 🔥🔥🔥");
-
-  const minimumRebalanceResult = minimumRebalanceAssignments({
-    cand,
-
-    selectedSupervisorIds,
-
-    professorGroups,
-
-    bundles,
-
-    result,
-
-    bundleAssignments,
-
-    professorAssignments,
-
-    forcedProfessorAssignments,
-
-    minimumEnabled,
-
-    minimumTarget,
-
-    variant,
-  });
-
-  console.log("🎯 Minimum Rebalance result:", minimumRebalanceResult);
-
-  console.log("🔄 SWAP REBALANCE");
-
-  const swapRebalanceResult = swapProfessorsBetweenSupervisors({
-    cand,
-
-    selectedSupervisorIds,
-
-    professorGroups,
-
-    bundles,
-
-    result,
-
-    bundleAssignments,
-
-    professorAssignments,
-
-    forcedProfessorAssignments,
-
-    minimumEnabled,
-
-    minimumTarget,
-
-    variant,
-  });
-
-  console.log("🔄 Swap Rebalance result:", swapRebalanceResult);
-
-  // ========================================================
-  // FINAL REBUILD
-  // ========================================================
-
-  rebuildCandidateState(
-    cand,
-    bundles,
-    professorGroups,
-    bundleAssignments,
-    professorAssignments,
-    result,
-  );
-
-  // ========================================================
-  // Final verification
-  // ========================================================
-
-  const assignedGroupIds = new Set(
-    result
-      .map((row) =>
-        Number(row.session_group_id ?? row.sessionGroupId ?? row.id),
-      )
-      .filter((id) => Number.isInteger(id)),
-  );
-
-  const totalGroups = normalizedGroups.length;
-
-  const assignedGroups = assignedGroupIds.size;
-
-  // ========================================================
-  // Final bundle count
-  // ========================================================
-
-  const assignedBundles = Array.from(bundleAssignments.keys()).length;
-
-  // ========================================================
-  // Final metrics
-  // ========================================================
-
-  const finalMetrics = calculateRebalanceMetrics(
-    cand,
-    selectedSupervisorIds,
-    minimumEnabled,
-    minimumTarget,
-  );
-
-  // ========================================================
-  // Conflicts
-  // ========================================================
-
-  let conflicts = 0;
-
-  for (const supervisorId of selectedSupervisorIds) {
-    const supervisor = cand[supervisorId];
-
-    if (!supervisor) {
-      continue;
-    }
-
-    const seenSlots = new Set();
-
-    for (const row of result) {
-      const assignedSupervisor = Number(row.supervisor_id ?? row.supervisorId);
-
-      if (assignedSupervisor !== Number(supervisorId)) {
-        continue;
-      }
-
-      const day = dateISO(row.date ?? row.Date);
-
-      const period = normalizePeriod(row.period ?? row.Period);
-
-      const slotKey = `${day}|${period}`;
-
-      if (seenSlots.has(slotKey)) {
-        conflicts++;
-      }
-
-      seenSlots.add(slotKey);
-    }
-  }
-
-  // ========================================================
-  // Professor consistency verification
-  // ========================================================
-
-  let professorViolations = 0;
-
-  for (const professor of professorGroups) {
-    const assignedSupervisor = professorAssignments.get(professor.key);
-
-    if (assignedSupervisor === undefined || assignedSupervisor === null) {
-      professorViolations++;
-      continue;
-    }
-
-    for (const bundle of professor.bundles) {
-      const bundleSupervisor = bundleAssignments.get(bundle.key);
-
-      if (Number(bundleSupervisor) !== Number(assignedSupervisor)) {
-        professorViolations++;
-
-        break;
-      }
-    }
-  }
-
-  // ========================================================
-  // Minimum statistics
-  // ========================================================
-
-  const minimumStatistics = selectedSupervisorIds.map((supervisorId) => {
-    const total = Number(cand[supervisorId]?.total || 0);
-
-    return {
-      supervisorId: Number(supervisorId),
-
-      periods: total,
-
-      minimum: minimumEnabled ? minimumTarget : null,
-
-      reachedMinimum: minimumEnabled ? total >= minimumTarget : true,
-
-      deficit: minimumEnabled ? Math.max(0, minimumTarget - total) : 0,
-    };
-  });
-
-  // ========================================================
-  // Logs
-  // ========================================================
-
-  console.log("");
-  console.log("==================================================");
-  console.log("🏁 PLAN GENERATION FINISHED");
-  console.log("==================================================");
-
-  console.log(`📦 Total groups: ${totalGroups}`);
-
-  console.log(`✅ Assigned groups: ${assignedGroups}/${totalGroups}`);
-
-  console.log(`📦 Bundles assigned: ${assignedBundles}/${bundles.length}`);
-
-  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
 
   console.log(
-    `👥 Supervisors used: ${
-      selectedSupervisorIds.filter((id) => Number(cand[id]?.total || 0) > 0)
-        .length
+    "🔄 Rebalance result:",
+    rebalanceResult,
+  );
+
+  // ==========================================================
+  // Minimum Rebalance Engine
+  // ==========================================================
+
+  console.log(
+    "🔥🔥🔥 MINIMUM REBALANCE TEST MARKER 🔥🔥🔥",
+  );
+
+  const minimumRebalanceResult =
+    minimumRebalanceAssignments({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
+
+  console.log(
+    "🎯 Minimum Rebalance result:",
+    minimumRebalanceResult,
+  );
+
+  // ==========================================================
+  // Swap Rebalance Engine
+  // ==========================================================
+
+  const swapRebalanceResult =
+    swapProfessorsBetweenSupervisors({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
+
+  console.log(
+    "🔄 Swap Rebalance result:",
+    swapRebalanceResult,
+  );
+
+  // ==========================================================
+  // FINAL CONSISTENCY REBUILD
+  // ==========================================================
+
+  rebuildCandidateState(
+    cand,
+    bundles,
+    professorGroups,
+    bundleAssignments,
+    professorAssignments,
+    result,
+  );
+
+  // ==========================================================
+  // DEBUG BEFORE SAVE
+  // ==========================================================
+
+  console.log("========================================");
+  console.log("🔍 FINAL RESULT BEFORE SAVE");
+  console.log("========================================");
+
+  console.log(
+    "📦 result is array:",
+    Array.isArray(result),
+  );
+
+  console.log(
+    "📦 result length:",
+    result.length,
+  );
+
+  console.log(
+    "📦 bundleAssignments:",
+    bundleAssignments.size,
+  );
+
+  console.log(
+    "📦 professorAssignments:",
+    professorAssignments.size,
+  );
+
+  console.log(
+    "📦 first result:",
+    result[0] || null,
+  );
+
+  console.log("========================================");
+
+  // ==========================================================
+  // Save
+  // ==========================================================
+
+  await saveAssignments(
+    planId,
+    result,
+  );
+
+  console.log(
+    `💾 Assignments saved for plan ${planId}`,
+  );
+
+  // ==========================================================
+  // Statistics
+  // ==========================================================
+
+  const assignedGroupIds =
+    new Set(
+      result
+        .map((r) =>
+          Number(
+            r.session_group_id ??
+              r.sessionGroupId ??
+              r.id,
+          ),
+        )
+        .filter(Number.isInteger),
+    );
+
+  const assignedGroups =
+    assignedGroupIds.size;
+
+  const totalGroups =
+    groups.length;
+
+  const supervisorsUsed =
+    Object.values(cand).filter(
+      (c) =>
+        Number(c.total || 0) > 0,
+    );
+
+  // ==========================================================
+  // Fairness
+  // ==========================================================
+
+  const totals =
+    Object.values(cand).map(
+      (c) =>
+        Number(c.total || 0),
+    );
+
+  const minTotal = totals.length
+    ? Math.min(...totals)
+    : 0;
+
+  const maxTotal = totals.length
+    ? Math.max(...totals)
+    : 0;
+
+  const fairnessDifference =
+    maxTotal - minTotal;
+
+  const totalBundles =
+    bundles.length;
+
+  const assignedBundles =
+    bundleAssignments.size;
+
+  // ==========================================================
+  // Professor Uniqueness
+  // ==========================================================
+
+  const professorSupervisorCheck =
+    new Map();
+
+  for (const row of result) {
+    const professorKey =
+      getProfessorKey({
+        professor_id:
+          row.professor_id,
+
+        professor_name:
+          row.professor,
+      });
+
+    if (
+      !professorSupervisorCheck.has(
+        professorKey,
+      )
+    ) {
+      professorSupervisorCheck.set(
+        professorKey,
+        Number(
+          row.supervisor_id,
+        ),
+      );
+    } else {
+      const existing =
+        professorSupervisorCheck.get(
+          professorKey,
+        );
+
+      if (
+        Number(existing) !==
+        Number(row.supervisor_id)
+      ) {
+        professorSupervisorCheck.set(
+          professorKey,
+          "MULTIPLE",
+        );
+      }
+    }
+  }
+
+  let professorUniquenessViolations = 0;
+
+  for (const [
+    professorKey,
+    supervisorId,
+  ] of professorSupervisorCheck) {
+    const assigned =
+      professorAssignments.get(
+        professorKey,
+      );
+
+    if (
+      supervisorId ===
+      "MULTIPLE"
+    ) {
+      professorUniquenessViolations++;
+      continue;
+    }
+
+    if (
+      assigned !== undefined &&
+      Number(assigned) !==
+        Number(supervisorId)
+    ) {
+      professorUniquenessViolations++;
+    }
+  }
+
+  // ==========================================================
+  // Minimum Statistics
+  // ==========================================================
+
+  const minimumStatistics =
+    Object.values(cand).map(
+      (c) => {
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(c.id),
+          );
+
+        const reached =
+          minimumEnabled
+            ? Number(c.total) >=
+              minimumTarget
+            : null;
+
+        return {
+          "Supervisor ID":
+            c.id,
+
+          Supervisor:
+            supervisor?.name ??
+            c.id,
+
+          "Actual Periods":
+            c.total,
+
+          "Minimum Periods":
+            minimumEnabled
+              ? minimumTarget
+              : "",
+
+          "Minimum Reached":
+            minimumEnabled
+              ? reached
+                ? "Yes"
+                : "No"
+              : "",
+
+          "Used Days":
+            Object.keys(
+              c.byDay,
+            ).length,
+        };
+      },
+    );
+
+  const minimumsReached =
+    hasReachedAllMinimums(
+      cand,
+      selectedSupervisorIds,
+      minimumEnabled,
+      minimumTarget,
+    );
+
+  // ==========================================================
+  // Logs
+  // ==========================================================
+
+  console.log(
+    `✅ Plan generated: ${assignedGroups}/${totalGroups} groups assigned`,
+  );
+
+  console.log(
+    `📦 Bundles assigned: ${assignedBundles}/${totalBundles}`,
+  );
+
+  console.log(
+    `👨‍🏫 Unique professors: ${professorGroups.length}`,
+  );
+
+  console.log(
+    `👥 Supervisors used: ${supervisorsUsed.length}`,
+  );
+
+  console.log(
+    `⚠️ Conflicts: ${conflicts.length}`,
+  );
+
+  console.log(
+    `⚖️ Fairness difference AFTER REBALANCE: ${fairnessDifference}`,
+  );
+
+  console.log(
+    `🔒 Professor uniqueness violations: ${professorUniquenessViolations}`,
+  );
+
+  console.log(
+    `🔄 Rebalance moves: ${
+      rebalanceResult?.moves ??
+      rebalanceResult?.totalMoves ??
+      0
     }`,
   );
 
-  console.log(`⚠️ Conflicts: ${conflicts}`);
-
-  console.log(`⚠️ Professor violations: ${professorViolations}`);
-
-  console.log(`⚖️ Fairness difference: ${finalMetrics.difference}`);
-
-  console.log(`📊 Fairness sum squared: ${finalMetrics.sumSquared}`);
-
   if (minimumEnabled) {
     console.log(
-      `🎯 Supervisors below minimum: ${finalMetrics.supervisorsBelowMinimum}`,
+      `🎯 Minimum periods target: ${minimumTarget}`,
     );
 
     console.log(
-      `🎯 Total minimum deficit: ${finalMetrics.totalMinimumDeficit}`,
+      `🎯 All minimums reached: ${minimumsReached}`,
+    );
+
+    console.log(
+      "🎯 Minimum statistics:",
+      minimumStatistics,
     );
   }
 
-  console.log(`🔄 Rebalance moves: ${rebalanceResult.totalMoves ?? 0}`);
-
-  console.log(
-    `🎯 Minimum Rebalance moves: ${minimumRebalanceResult.moves ?? 0}`,
-  );
-
-  console.log(
-    `🔄 Swap Rebalance moves: ${swapRebalanceResult.totalSwaps ?? 0}`,
-  );
-
-  // ========================================================
-  // Safety validation
-  // ========================================================
-
-  if (assignedGroups !== totalGroups) {
-    throw new Error(
-      `Plan generation incomplete: ${assignedGroups}/${totalGroups} groups assigned.`,
-    );
-  }
-
-  if (conflicts > 0) {
-    throw new Error(
-      `Plan generation produced ${conflicts} supervisor slot conflicts.`,
-    );
-  }
-
-  if (professorViolations > 0) {
-    throw new Error(
-      `Plan generation produced ${professorViolations} professor assignment violations.`,
-    );
-  }
-
-  // ========================================================
-  // Save assignments
-  // ========================================================
-
-  console.log("========================================");
-console.log("🔍 FINAL RESULT BEFORE SAVE");
-console.log("📦 result is array:", Array.isArray(result));
-console.log("📦 result length:", result?.length);
-console.log("📦 result:", JSON.stringify(result, null, 2));
-console.log("========================================");
-
-  await saveAssignments(planId, result);
-
-  console.log(`💾 Assignments saved for plan ${planId}`);
-
-  // ========================================================
+  // ==========================================================
   // Export Excel
-  // ========================================================
+  // ==========================================================
 
-  const exportDir = path.join(__dirname, "../exports");
+  const exportDir =
+    path.join(
+      __dirname,
+      "../exports",
+    );
 
-  if (!fs.existsSync(exportDir)) {
-    fs.mkdirSync(exportDir, {
-      recursive: true,
-    });
+  if (
+    !fs.existsSync(exportDir)
+  ) {
+    fs.mkdirSync(
+      exportDir,
+      {
+        recursive: true,
+      },
+    );
   }
 
-  const exportRows = result.map((row) => ({
-    "Session Group ID":
-      row.session_group_id ?? row.sessionGroupId ?? row.id ?? "",
+  // ==========================================================
+  // Distribution Sheet
+  // ==========================================================
 
-    CRN: row.crn ?? row.CRN ?? "",
+  const distributionRows =
+    result.map((row) => {
+      const supervisor =
+        supervisors.find(
+          (s) =>
+            Number(s.id) ===
+            Number(
+              row.supervisor_id,
+            ),
+        );
 
-    Professor:
-      row.professor_name ??
-      row.professorName ??
-      row.professor ??
-      row.Professor ??
-      "",
+      return {
+        "Session Group ID":
+          row.session_group_id,
 
-    Date: row.date ?? row.Date ?? "",
+        CRN: row.crn,
 
-    Period: row.period ?? row.Period ?? "",
+        Professor:
+          row.professor,
 
-    Supervisor:
-      row.supervisor_name ??
-      row.supervisorName ??
-      row.supervisor ??
-      row.Supervisor ??
-      "",
-  }));
+        Date: row.date,
 
-  const worksheet = xlsx.utils.json_to_sheet(exportRows);
+        Period: row.period,
 
-  const workbook = xlsx.utils.book_new();
+        Supervisor:
+          supervisor?.name ??
+          row.supervisor_id,
+      };
+    });
 
-  xlsx.utils.book_append_sheet(workbook, worksheet, "Plan");
+  // ==========================================================
+  // Conflicts Sheet
+  // ==========================================================
 
-  const exportPath = path.join(exportDir, `plan_${planId}.xlsx`);
+  const conflictsRows =
+    conflicts.map((item) => ({
+      Date:
+        item.date ?? "",
 
-  xlsx.writeFile(workbook, exportPath);
+      Period:
+        item.period ?? "",
 
-  console.log(`📄 Excel exported: ${exportPath}`);
+      Professor:
+        item.professor ?? "",
 
-  // ========================================================
+      "Professor ID":
+        item.professor_id ??
+        "",
+
+      Type:
+        item.type ?? "",
+
+      "Supervisor ID":
+        item.supervisor_id ??
+        "",
+
+      Message:
+        item.message ?? "",
+    }));
+
+  // ==========================================================
+  // Statistics Sheet
+  // ==========================================================
+
+  const statisticsRows =
+    Object.values(cand).map(
+      (c) => {
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(c.id),
+          );
+
+        const minimumReached =
+          minimumEnabled
+            ? c.total >=
+              minimumTarget
+            : null;
+
+        return {
+          "Supervisor ID":
+            c.id,
+
+          Supervisor:
+            supervisor?.name ??
+            c.id,
+
+          "Total Periods":
+            c.total,
+
+          "Minimum Periods":
+            minimumEnabled
+              ? minimumTarget
+              : "",
+
+          "Minimum Reached":
+            minimumEnabled
+              ? minimumReached
+                ? "Yes"
+                : "No"
+              : "",
+
+          "Used Days":
+            Object.keys(
+              c.byDay,
+            ).length,
+        };
+      },
+    );
+
+  // ==========================================================
+  // Professor Assignment Sheet
+  // ==========================================================
+
+  const professorRows =
+    professorGroups.map(
+      (professor) => {
+        const supervisorId =
+          professorAssignments.get(
+            professor.key,
+          );
+
+        const supervisor =
+          supervisors.find(
+            (s) =>
+              Number(s.id) ===
+              Number(
+                supervisorId,
+              ),
+          );
+
+        return {
+          "Professor ID":
+            professor.professor_id,
+
+          Professor:
+            professor.professor,
+
+          "Total Periods":
+            professor.bundles.length,
+
+          Supervisor:
+            supervisor?.name ??
+            supervisorId ??
+            "",
+        };
+      },
+    );
+
+  // ==========================================================
+  // Workbook
+  // ==========================================================
+
+  const workbook =
+    xlsx.utils.book_new();
+
+  const distributionSheet =
+    xlsx.utils.json_to_sheet(
+      distributionRows,
+    );
+
+  const conflictsSheet =
+    xlsx.utils.json_to_sheet(
+      conflictsRows.length
+        ? conflictsRows
+        : [
+            {
+              Status:
+                "No conflicts",
+            },
+          ],
+    );
+
+  const statisticsSheet =
+    xlsx.utils.json_to_sheet(
+      statisticsRows,
+    );
+
+  const professorsSheet =
+    xlsx.utils.json_to_sheet(
+      professorRows,
+    );
+
+  xlsx.utils.book_append_sheet(
+    workbook,
+    distributionSheet,
+    "Distribution",
+  );
+
+  xlsx.utils.book_append_sheet(
+    workbook,
+    conflictsSheet,
+    "Conflicts",
+  );
+
+  xlsx.utils.book_append_sheet(
+    workbook,
+    statisticsSheet,
+    "Statistics",
+  );
+
+  xlsx.utils.book_append_sheet(
+    workbook,
+    professorsSheet,
+    "Professor Assignment",
+  );
+
+  // ==========================================================
+  // Minimum Periods Sheet
+  // ==========================================================
+
+  if (minimumEnabled) {
+    const minimumSheet =
+      xlsx.utils.json_to_sheet(
+        minimumStatistics,
+      );
+
+    xlsx.utils.book_append_sheet(
+      workbook,
+      minimumSheet,
+      "Minimum Periods",
+    );
+  }
+
+  // ==========================================================
+  // Export Path
+  // ==========================================================
+
+  const exportPath =
+    path.join(
+      exportDir,
+      `plan_${planId}.xlsx`,
+    );
+
+  xlsx.writeFile(
+    workbook,
+    exportPath,
+  );
+
+  console.log(
+    `📄 Excel exported: ${exportPath}`,
+  );
+
+  // ==========================================================
   // Return
-  // ========================================================
+  // ==========================================================
 
   return {
     success: true,
@@ -4524,59 +5367,90 @@ console.log("========================================");
 
     variant,
 
-    totalGroups,
+    assigned:
+      assignedGroups,
+
+    total:
+      totalGroups,
 
     assignedGroups,
-
-    totalBundles: bundles.length,
+    totalGroups,
 
     assignedBundles,
-
-    uniqueProfessors: professorGroups.length,
-
-    supervisorsUsed: selectedSupervisorIds.filter(
-      (id) => Number(cand[id]?.total || 0) > 0,
-    ).length,
+    totalBundles,
 
     conflicts,
 
-    professorViolations,
+    conflictsCount:
+      conflicts.length,
 
-    fairnessDifference: finalMetrics.difference,
+    supervisorsUsed:
+      supervisorsUsed.length,
 
-    fairnessSumSquared: finalMetrics.sumSquared,
+    fairnessDifference,
 
-    minimumEnabled,
+    idealFairnessRange:
+      "0-1",
 
-    minimumTarget,
+    professorUniquenessViolations,
 
-    minimumStatistics,
+    rebalanceMoves:
+      rebalanceResult?.moves ??
+      rebalanceResult?.totalMoves ??
+      0,
 
-    minimumSupervisorsBelow: finalMetrics.supervisorsBelowMinimum,
+    rebalanceIterations:
+      rebalanceResult?.iterations ??
+      0,
 
-    minimumTotalDeficit: finalMetrics.totalMinimumDeficit,
+    minimumRebalanceMoves:
+      minimumRebalanceResult
+        ?.moves ?? 0,
 
-    rebalanceMoves: rebalanceResult.totalMoves ?? 0,
-
-    rebalanceIterations: rebalanceResult.iterations ?? 0,
-
-    minimumRebalanceMoves: minimumRebalanceResult.moves ?? 0,
-
-    minimumRebalanceIterations: minimumRebalanceResult.iterations ?? 0,
+    minimumRebalanceIterations:
+      minimumRebalanceResult
+        ?.iterations ?? 0,
 
     minimumRebalanceRemainingDeficit:
-      minimumRebalanceResult.remainingDeficit ?? [],
+      minimumRebalanceResult
+        ?.remainingDeficit ?? [],
 
-    swapMoves: swapRebalanceResult.totalSwaps ?? 0,
+    swapMoves:
+      swapRebalanceResult
+        ?.swaps ??
+      swapRebalanceResult
+        ?.totalSwaps ??
+      0,
 
-    swapIterations: swapRebalanceResult.iterations ?? 0,
+    swapIterations:
+      swapRebalanceResult
+        ?.iterations ??
+      0,
 
     exportPath,
 
-    assignments: result,
+    statistics:
+      statisticsRows,
+
+    minimumPeriodsEnabled:
+      minimumEnabled,
+
+    minimumPeriods:
+      minimumEnabled
+        ? minimumTarget
+        : null,
+
+    minimumsReached,
+
+    minimumStatistics,
+
+    selectedSupervisors:
+      selectedSupervisorIds,
+
+    assignments:
+      result,
   };
 }
-
 // ============================================================
 // Daily Pools
 // ============================================================
