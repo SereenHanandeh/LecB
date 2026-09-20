@@ -4453,6 +4453,13 @@ async function generatePlan(
   // Save assignments
   // ========================================================
 
+  console.log("========================================");
+console.log("🔍 FINAL RESULT BEFORE SAVE");
+console.log("📦 result is array:", Array.isArray(result));
+console.log("📦 result length:", result?.length);
+console.log("📦 result:", JSON.stringify(result, null, 2));
+console.log("========================================");
+
   await saveAssignments(planId, result);
 
   console.log(`💾 Assignments saved for plan ${planId}`);

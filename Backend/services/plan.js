@@ -676,11 +676,19 @@ async function clearAssignments(planId) {
   );
 }
 
-async function saveAssignments(
-  planId,
-  assignments = []
-) {
+async function saveAssignments(planId, assignments = []) {
+  console.log("========================================");
+  console.log("💾 SAVE ASSIGNMENTS DEBUG");
+  console.log("🆔 planId:", planId);
+  console.log("📦 assignments type:", typeof assignments);
+  console.log("📦 assignments isArray:", Array.isArray(assignments));
+  console.log("📦 assignments length:", assignments?.length);
+  console.log("📦 first assignment:", assignments?.[0]);
+  console.log("========================================");
+
   await clearAssignments(planId);
+
+  let savedCount = 0;
 
   for (const assignment of assignments) {
     const sessionGroupId = Number(
@@ -705,7 +713,7 @@ async function saveAssignments(
       continue;
     }
 
-    await pool.query(
+    const insertResult = await pool.query(
       `
       INSERT INTO assignments (
         plan_id,
@@ -714,6 +722,7 @@ async function saveAssignments(
       )
       VALUES ($1, $2, $3)
       ON CONFLICT DO NOTHING
+      RETURNING id
       `,
       [
         planId,
@@ -721,9 +730,16 @@ async function saveAssignments(
         supervisorId,
       ]
     );
-  }
-}
 
+    if (insertResult.rowCount > 0) {
+      savedCount++;
+    }
+  }
+
+  console.log("💾 SAVED ASSIGNMENTS:", savedCount);
+
+  return savedCount;
+}
 // =====================================================
 // Move Assignment
 // =====================================================
