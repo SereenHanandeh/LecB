@@ -26,25 +26,64 @@ function handleError(res, err, message = "Internal server error") {
   });
 }
 
-// =====================================================
 // Create Plan
-// =====================================================
-
 async function createPlan(req, res) {
   try {
-    const { name, excelBatchId, dateFrom, dateTo } = req.body;
+    const {
+      name,
+      excelBatchId,
+      dateFrom,
+      dateTo,
+      category,
+      planCategory,
+      plan_category,
+    } = req.body;
+
+    // دعم أكثر من اسم قادم من Frontend
+    const selectedCategory =
+      category ?? planCategory ?? plan_category;
+
+    // ==============================
+    // Required fields
+    // ==============================
 
     if (!name || !excelBatchId || !dateFrom || !dateTo) {
       return res.status(400).json({
         success: false,
-        error: "name, excelBatchId, dateFrom and dateTo are required",
+        error:
+          "name, excelBatchId, dateFrom and dateTo are required",
       });
     }
+
+    // ==============================
+    // Validate category
+    // ==============================
+
+    const allowedCategories = [
+      "مدمج",
+      "دبلوم",
+      "متطلبات",
+    ];
+
+    if (!allowedCategories.includes(selectedCategory)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "يجب اختيار فئة صحيحة للخطة: مدمج، دبلوم، أو متطلبات",
+      });
+    }
+
+    // ==============================
+    // Validate dates
+    // ==============================
 
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
 
-    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    if (
+      Number.isNaN(fromDate.getTime()) ||
+      Number.isNaN(toDate.getTime())
+    ) {
       return res.status(400).json({
         success: false,
         error: "Invalid dateFrom or dateTo",
@@ -58,14 +97,23 @@ async function createPlan(req, res) {
       });
     }
 
+    // ==============================
+    // Create plan
+    // ==============================
+
     const plan = await createPlanRow({
       name,
       excelBatchId,
       dateFrom,
       dateTo,
+      category: selectedCategory,
     });
 
-    console.log("✅ Created plan:", plan);
+    console.log("========================================");
+    console.log("✅ CREATED PLAN");
+    console.log("🆔 Plan:", plan);
+    console.log("📂 Category:", selectedCategory);
+    console.log("========================================");
 
     return res.status(201).json({
       success: true,
@@ -73,9 +121,14 @@ async function createPlan(req, res) {
       data: plan,
     });
   } catch (err) {
-    return handleError(res, err, "Error creating plan");
+    return handleError(
+      res,
+      err,
+      "Error creating plan",
+    );
   }
 }
+
 // =====================================================
 // Set Duty Pool
 // =====================================================

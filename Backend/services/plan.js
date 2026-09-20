@@ -9,6 +9,7 @@ async function createPlanRow({
   excelBatchId,
   dateFrom,
   dateTo,
+  category,
 }) {
   const result = await pool.query(
     `
@@ -16,12 +17,19 @@ async function createPlanRow({
       name,
       excel_batch_id,
       date_from,
-      date_to
+      date_to,
+      category
     )
-    VALUES ($1, $2, $3, $4)
+    VALUES ($1, $2, $3, $4, $5)
     RETURNING *
     `,
-    [name, excelBatchId, dateFrom, dateTo]
+    [
+      name,
+      excelBatchId,
+      dateFrom,
+      dateTo,
+      category,
+    ]
   );
 
   return result.rows[0];
