@@ -2835,6 +2835,272 @@ function minimumRebalanceAssignments({
 }
 
 // ============================================================
+// Single Bundle Fit Check (used only by the Minimum Split
+// Fallback engine below — checks ONE session, not a whole
+// professor)
+// ============================================================
+
+function canSingleBundleFitSupervisor(supervisor, day, period) {
+  if (!supervisor || !day || !period) {
+    return false;
+  }
+
+  const slotKey = getSupervisorSlotKey(day, period);
+
+  if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
+    return false;
+  }
+
+  if (supervisor.byDayPeriods?.[day]?.has(period)) {
+    return false;
+  }
+
+  const rank = getPeriodRank(period);
+
+  if (
+    rank !== null &&
+    rank !== undefined &&
+    supervisor.byDayPeriodRanks?.[day]?.has(rank)
+  ) {
+    return false;
+  }
+
+  const previousDay = addDaysISO(day, -1);
+  const nextDay = addDaysISO(day, 1);
+
+  const existingDays = Object.keys(supervisor.byDay || {}).filter(
+    (d) => Number(supervisor.byDay[d]) > 0,
+  );
+
+  if (existingDays.includes(previousDay) || existingDays.includes(nextDay)) {
+    return false;
+  }
+
+  return true;
+}
+
+// ============================================================
+// MINIMUM SPLIT FALLBACK ENGINE (LAST RESORT)
+// ============================================================
+//
+// إذا فشلت كل المحاولات السابقة (Rebalance / Minimum Rebalance /
+// Swap) في إيصال كل مشرف للحد الأدنى - لأن الدكاترة "كتلة واحدة"
+// غير قابلة للتجزئة وأحجامهم غير متساوية - هذا المحرك يسمح،
+// فقط كملاذ أخير، بنقل محاضرة واحدة (Bundle واحد) من دكتور
+// معيّن من مشرف عنده فائض واضح إلى مشرف عنده عجز، حتى لو أدى
+// هذا لتوزيع نفس الدكتور بين مشرفين اثنين.
+//
+// قواعد صارمة:
+// - لا ننقل من/إلى Forced Professors (Lock / Preassignment / Affinity).
+// - لا ننقل إذا كان المشرف المصدر سينزل تحت الحد الأدنى بعد النقل.
+// - لا ننقل إذا كسرنا Slot / Period Rank / Consecutive Day.
+// - كل نقلة هي Bundle واحد بس (محاضرة واحدة)، مش كل محاضرات الدكتور.
+// - كل تقسيم متعمد يتم تسجيله في splitProfessorKeys / details
+//   حتى لا يُحتسب لاحقًا كخطأ "Professor Uniqueness Violation".
+// ============================================================
+
+function minimumSplitFallback({
+  cand,
+  selectedSupervisorIds,
+  professorGroups,
+  bundles,
+  bundleMap,
+  result,
+  bundleAssignments,
+  professorAssignments,
+  forcedProfessorAssignments,
+  minimumEnabled,
+  minimumTarget,
+}) {
+  console.log("========================================");
+  console.log("🧩 STARTING MINIMUM SPLIT FALLBACK");
+  console.log("========================================");
+
+  const details = [];
+  const splitProfessorKeys = new Set();
+
+  if (!minimumEnabled) {
+    console.log("🧩 Split fallback skipped: minimum rule disabled.");
+
+    return { moves: 0, details, splitProfessorKeys, remainingDeficit: [] };
+  }
+
+  function rebuild() {
+    rebuildCandidateState(
+      cand,
+      bundles,
+      professorGroups,
+      bundleAssignments,
+      professorAssignments,
+      result,
+    );
+  }
+
+  rebuild();
+
+  const maxIterations = Math.max(20, bundles.length * 2);
+
+  let iterations = 0;
+  let totalMoves = 0;
+
+  while (iterations < maxIterations) {
+    iterations++;
+
+    const deficitSupervisors = [...selectedSupervisorIds]
+      .map((id) => cand[Number(id)])
+      .filter(Boolean)
+      .filter((s) => Number(s.total || 0) < minimumTarget)
+      .sort((a, b) => Number(a.total || 0) - Number(b.total || 0));
+
+    if (!deficitSupervisors.length) {
+      console.log(
+        "✅ All supervisors reached the minimum (after split fallback).",
+      );
+
+      break;
+    }
+
+    const target = deficitSupervisors[0];
+
+    // مشرفون عندهم فائض واضح، يمكن ياخذوا منهم Bundle واحد
+    // بدون ما ينزلوا هم تحت الحد الأدنى.
+    const donorSupervisors = [...selectedSupervisorIds]
+      .map((id) => cand[Number(id)])
+      .filter(Boolean)
+      .filter(
+        (s) =>
+          Number(s.id) !== Number(target.id) &&
+          Number(s.total || 0) - 1 >= minimumTarget,
+      )
+      .sort((a, b) => Number(b.total || 0) - Number(a.total || 0));
+
+    let moved = false;
+
+    for (const donor of donorSupervisors) {
+      const donorBundleKeys = [...bundleAssignments.entries()]
+        .filter(([, supId]) => Number(supId) === Number(donor.id))
+        .map(([key]) => key);
+
+      for (const bundleKey of donorBundleKeys) {
+        const bundle = bundleMap.get(bundleKey);
+
+        if (!bundle) {
+          continue;
+        }
+
+        if (forcedProfessorAssignments.has(bundle.professorKey)) {
+          continue;
+        }
+
+        const representative = bundle.groups?.[0];
+
+        if (!representative) {
+          continue;
+        }
+
+        const day = dateISO(representative.date);
+        const period = normalizePeriod(representative.period_label);
+
+        if (!canSingleBundleFitSupervisor(target, day, period)) {
+          continue;
+        }
+
+        // ------------------------------------------------
+        // تنفيذ نقل محاضرة واحدة فقط
+        // ------------------------------------------------
+
+        const groupIds = new Set(
+          (bundle.groups || [])
+            .map((g) => Number(g.id))
+            .filter(Number.isFinite),
+        );
+
+        for (let i = result.length - 1; i >= 0; i--) {
+          if (groupIds.has(Number(result[i].session_group_id))) {
+            result.splice(i, 1);
+          }
+        }
+
+        bundleAssignments.set(bundleKey, target.id);
+
+        for (const group of bundle.groups || []) {
+          result.push({
+            session_group_id: Number(group.id),
+            crn: group.crn,
+            professor: group.professor_name || group.professor || "",
+            professor_id: group.professor_id ?? null,
+            date: dateISO(group.date),
+            period: normalizePeriod(group.period_label),
+            supervisor_id: target.id,
+          });
+        }
+
+        rebuild();
+
+        splitProfessorKeys.add(bundle.professorKey);
+
+        details.push({
+          professor: bundle.professor,
+          professor_id: bundle.professor_id,
+          date: day,
+          period,
+          from_supervisor_id: donor.id,
+          to_supervisor_id: target.id,
+        });
+
+        totalMoves++;
+
+        console.log(
+          `🧩 SPLIT MOVE #${totalMoves}: ${bundle.professor} (${day} - ${period}) : Supervisor ${donor.id} → Supervisor ${target.id}`,
+        );
+
+        moved = true;
+
+        break;
+      }
+
+      if (moved) {
+        break;
+      }
+    }
+
+    if (!moved) {
+      console.log("⚠️ No valid split move found. Stopping split fallback.");
+
+      break;
+    }
+  }
+
+  const remainingDeficit = selectedSupervisorIds
+    .map((id) => {
+      const supervisor = cand[Number(id)];
+      const periods = Number(supervisor?.total || 0);
+
+      return {
+        supervisorId: Number(id),
+        periods,
+        minimum: minimumTarget,
+        deficit: Math.max(0, minimumTarget - periods),
+      };
+    })
+    .filter((item) => item.deficit > 0);
+
+  console.log("========================================");
+  console.log("🧩 MINIMUM SPLIT FALLBACK FINISHED");
+  console.log("========================================");
+  console.log("🧩 Total split moves:", totalMoves);
+  console.log("🧩 Split professors:", [...splitProfessorKeys]);
+  console.log("🧩 Remaining deficit after split fallback:", remainingDeficit);
+
+  return {
+    moves: totalMoves,
+    details,
+    splitProfessorKeys,
+    remainingDeficit,
+  };
+}
+
+// ============================================================
 // SWAP REBALANCE ENGINE
 // ============================================================
 
@@ -4783,6 +5049,33 @@ async function generatePlan(
   );
 
   // ==========================================================
+  // Minimum Split Fallback Engine (last resort)
+  // ==========================================================
+
+  const bundleMapForSplit = new Map(
+    bundles.map((bundle) => [bundle.key, bundle]),
+  );
+
+  const minimumSplitResult = minimumSplitFallback({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    bundleMap: bundleMapForSplit,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+  });
+
+  console.log(
+    "🧩 Minimum Split Fallback result:",
+    minimumSplitResult,
+  );
+
+  // ==========================================================
   // FINAL CONSISTENCY REBUILD
   // ==========================================================
 
@@ -4947,6 +5240,8 @@ async function generatePlan(
 
   let professorUniquenessViolations = 0;
 
+  let intentionalMinimumSplits = 0;
+
   for (const [
     professorKey,
     supervisorId,
@@ -4960,6 +5255,16 @@ async function generatePlan(
       supervisorId ===
       "MULTIPLE"
     ) {
+      if (
+        minimumSplitResult.splitProfessorKeys.has(
+          professorKey,
+        )
+      ) {
+        // تقسيم متعمّد من محرك الحد الأدنى، مش خطأ.
+        intentionalMinimumSplits++;
+        continue;
+      }
+
       professorUniquenessViolations++;
       continue;
     }
@@ -5338,6 +5643,63 @@ async function generatePlan(
   }
 
   // ==========================================================
+  // Minimum Split (Fallback) Sheet
+  // ==========================================================
+
+  if (
+    minimumEnabled &&
+    minimumSplitResult?.details?.length
+  ) {
+    const splitRows =
+      minimumSplitResult.details.map(
+        (item) => {
+          const fromSupervisor =
+            supervisors.find(
+              (s) =>
+                Number(s.id) ===
+                Number(
+                  item.from_supervisor_id,
+                ),
+            );
+
+          const toSupervisor =
+            supervisors.find(
+              (s) =>
+                Number(s.id) ===
+                Number(
+                  item.to_supervisor_id,
+                ),
+            );
+
+          return {
+            Professor: item.professor,
+            "Professor ID":
+              item.professor_id ?? "",
+            Date: item.date,
+            Period: item.period,
+            "From Supervisor":
+              fromSupervisor?.name ??
+              item.from_supervisor_id,
+            "To Supervisor":
+              toSupervisor?.name ??
+              item.to_supervisor_id,
+            Note:
+              "تقسيم اضطراري (ملاذ أخير) لتغطية الحد الأدنى فقط",
+          };
+        },
+      );
+
+    const splitSheet =
+      xlsx.utils.json_to_sheet(splitRows);
+
+    xlsx.utils.book_append_sheet(
+      workbook,
+      splitSheet,
+      "Minimum Split (Fallback)",
+    );
+  }
+
+  // ==========================================================
   // Export Path
   // ==========================================================
 
@@ -5426,6 +5788,17 @@ async function generatePlan(
       swapRebalanceResult
         ?.iterations ??
       0,
+
+    minimumSplitMoves:
+      minimumSplitResult?.moves ?? 0,
+
+    minimumSplitDetails:
+      minimumSplitResult?.details ?? [],
+
+    intentionalMinimumSplits,
+
+    minimumRemainingDeficitAfterSplit:
+      minimumSplitResult?.remainingDeficit ?? [],
 
     exportPath,
 
