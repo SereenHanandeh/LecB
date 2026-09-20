@@ -2051,6 +2051,73 @@ async function getAllPlans() {
 }
 
 
+async function saveAssignments(planId, assignments = []) {
+  console.log("========================================");
+  console.log("💾 SAVE ASSIGNMENTS DEBUG");
+  console.log("🆔 planId:", planId);
+  console.log("📦 assignments type:", typeof assignments);
+  console.log(
+    "📦 assignments isArray:",
+    Array.isArray(assignments),
+  );
+  console.log(
+    "📦 assignments length:",
+    assignments.length,
+  );
+  console.log(
+    "📦 first assignment:",
+    assignments[0],
+  );
+  console.log("========================================");
+
+  await clearAssignments(planId);
+
+  for (const assignment of assignments) {
+    const sessionGroupId = Number(
+      assignment.session_group_id,
+    );
+
+    const supervisorId = Number(
+      assignment.supervisor_id,
+    );
+
+    if (!Number.isInteger(sessionGroupId)) {
+      console.warn(
+        "⚠️ Invalid session_group_id:",
+        assignment,
+      );
+      continue;
+    }
+
+    if (!Number.isInteger(supervisorId)) {
+      console.warn(
+        "⚠️ Invalid supervisor_id:",
+        assignment,
+      );
+      continue;
+    }
+
+    await pool.query(
+      `
+      INSERT INTO assignments
+        (plan_id, session_group_id, supervisor_id)
+      VALUES
+        ($1, $2, $3)
+      ON CONFLICT DO NOTHING
+      `,
+      [
+        planId,
+        sessionGroupId,
+        supervisorId,
+      ],
+    );
+  }
+
+  console.log(
+    `💾 SAVED ASSIGNMENTS: ${assignments.length}`,
+  );
+}
+
 module.exports = {
   createPlanRow,
 
