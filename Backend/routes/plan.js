@@ -29,6 +29,6 @@ planRouter.post("/:planId/lock", Plan.lockAssignment);
 
 planRouter.delete("/:planId/lock/:sessionGroupId", Plan.unlockAssignment);
 
-planRouter.delete("/:planId", deletePlan);
+planRouter.delete("/:planId", Plan.deletePlan);
 
 module.exports = planRouter;
