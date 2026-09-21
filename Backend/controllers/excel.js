@@ -976,45 +976,46 @@ async function processExcel(buffer) {
     // 8. Create Session Groups
     // =================================================
 
-    const groupsResult =
-      await client.query(
-        `
-        SELECT
-          rs.excel_batch_id,
-          rs.date,
-          rs.period_label,
-          rs.time_from,
-          rs.time_to,
-          rs.crn,
-          sl.professor_id,
-          COUNT(*)::int AS sessions
+   const groupsResult =
+  await client.query(
+    `
+    SELECT
+      rs.excel_batch_id,
+      rs.date,
+      rs.period_label,
+      rs.time_from,
+      rs.time_to,
+      rs.crn,
+      rs.course_text,
+      sl.professor_id,
+      COUNT(*)::int AS sessions
 
-        FROM raw_sessions rs
+    FROM raw_sessions rs
 
-        LEFT JOIN session_links sl
-          ON sl.raw_session_id =
-             rs.id
+    LEFT JOIN session_links sl
+      ON sl.raw_session_id =
+         rs.id
 
-        WHERE
-          rs.excel_batch_id = $1
+    WHERE
+      rs.excel_batch_id = $1
 
-        GROUP BY
-          rs.excel_batch_id,
-          rs.date,
-          rs.period_label,
-          rs.time_from,
-          rs.time_to,
-          rs.crn,
-          sl.professor_id
+    GROUP BY
+      rs.excel_batch_id,
+      rs.date,
+      rs.period_label,
+      rs.time_from,
+      rs.time_to,
+      rs.crn,
+      rs.course_text,
+      sl.professor_id
 
-        ORDER BY
-          rs.date,
-          rs.time_from,
-          rs.time_to
-        `,
-        [batchId]
-      );
-
+    ORDER BY
+      rs.date,
+      rs.time_from,
+      rs.time_to
+    `,
+    [batchId]
+  );
     console.log(
       `📦 Creating ${groupsResult.rows.length} session groups`
     );
@@ -1023,20 +1024,44 @@ async function processExcel(buffer) {
     // 9. Bulk Insert Session Groups
     // =================================================
 
-    const sessionGroupRows =
-      groupsResult.rows.map(
-        (group) => [
-          group.excel_batch_id,
-          group.date,
-          group.period_label,
-          group.time_from,
-          group.time_to,
-          group.crn,
-          group.professor_id,
-          1,
-          group.sessions,
-        ]
-      );
+   const sessionGroupRows =
+  groupsResult.rows.map(
+    (group) => [
+      group.excel_batch_id,
+      group.date,
+      group.period_label,
+      group.time_from,
+      group.time_to,
+      group.crn,
+      group.course_text,
+      group.professor_id,
+      1,
+      group.sessions,
+    ]
+  );
+
+if (
+  sessionGroupRows.length
+) {
+  await bulkInsert(
+    client,
+    "session_groups",
+    [
+      "excel_batch_id",
+      "date",
+      "period_label",
+      "time_from",
+      "time_to",
+      "crn",
+      "course_name",
+      "professor_id",
+      "required_supervisors",
+      "sessions",
+    ],
+    sessionGroupRows,
+    500
+  );
+}
 
     if (
       sessionGroupRows.length

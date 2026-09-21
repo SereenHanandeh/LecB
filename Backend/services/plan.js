@@ -468,28 +468,27 @@ async function getPlanContext(planId) {
   // ---------------------------------------------------
   // 2. Session Groups
   // ---------------------------------------------------
-
-  const sessionsResult = await pool.query(
-    `
-    SELECT
-      sg.*,
-      p.name AS professor_name
-    FROM session_groups sg
-    LEFT JOIN professors p
-      ON p.id = sg.professor_id
-    WHERE sg.excel_batch_id = $1
-      AND sg.date BETWEEN $2 AND $3
-    ORDER BY
-      sg.date,
-      sg.period_label,
-      sg.id
-    `,
-    [
-      plan.excel_batch_id,
-      plan.date_from,
-      plan.date_to,
-    ]
-  );
+const sessionsResult = await pool.query(
+  `
+  SELECT
+    sg.*,
+    p.name AS professor_name
+  FROM session_groups sg
+  LEFT JOIN professors p
+    ON p.id = sg.professor_id
+  WHERE sg.excel_batch_id = $1
+    AND sg.date BETWEEN $2 AND $3
+  ORDER BY
+    sg.date,
+    sg.period_label,
+    sg.id
+  `,
+  [
+    plan.excel_batch_id,
+    plan.date_from,
+    plan.date_to,
+  ]
+);
 
   // ---------------------------------------------------
   // 3. Supervisors
@@ -621,7 +620,7 @@ const assignmentsResult = await pool.query(
 
     -- بيانات Session Group
     sg.crn,
-    c.name AS course_name,
+    COALESCE(sg.course_name, c.name) AS course_name,
     sg.date,
     sg.period_label,
     sg.time_from,
@@ -641,7 +640,7 @@ const assignmentsResult = await pool.query(
   JOIN session_groups sg
     ON sg.id = a.session_group_id
 
-  -- جلب اسم الكورس من جدول courses باستخدام CRN
+  -- الآن فقط كنسخة احتياطية في حال كان course_name فارغًا
   LEFT JOIN courses c
     ON c.crn = sg.crn
 
