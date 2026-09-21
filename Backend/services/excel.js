@@ -9,6 +9,13 @@ const path = require("path");
 const xlsx = require("xlsx");
 
 // ============================================================
+// Config
+// ============================================================
+// true  = يُسمح للمشرف بأخذ نفس (اليوم + الفترة) مع أكثر من دكتور
+// false = السلوك القديم (فترة واحدة فقط لكل مشرف في نفس الوقت)
+const ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS = true;
+
+// ============================================================
 // Excel Import
 // ============================================================
 
@@ -255,7 +262,21 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
     return true;
   }
 
-  const sortedNew = [...new Set(cleanRanks)].sort((a, b) => a - b);
+  const existingRanks = supervisor.byDayPeriodRanks?.[day];
+
+  let uniqueNew = [...new Set(cleanRanks)];
+
+  // ✅ الفترات الموجودة عند المشرف مسبقًا لا تُعد فترات جديدة
+  if (ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS && existingRanks?.size) {
+    uniqueNew = uniqueNew.filter((rank) => !existingRanks.has(rank));
+  }
+
+  // كل الفترات مكررة (نفس فترات المشرف الحالية) => مسموح
+  if (!uniqueNew.length) {
+    return true;
+  }
+
+  const sortedNew = uniqueNew.sort((a, b) => a - b);
 
   // الفترات الجديدة نفسها يجب أن تكون متسلسلة بدون فراغ داخلي
   for (let i = 1; i < sortedNew.length; i++) {
@@ -263,8 +284,6 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
       return false;
     }
   }
-
-  const existingRanks = supervisor.byDayPeriodRanks?.[day];
 
   if (!existingRanks || existingRanks.size === 0) {
     // أول تعيين لهذا المشرف في هذا اليوم
@@ -483,28 +502,30 @@ function assignBundleToSupervisor(
     return true;
   }
 
-  if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
-    return false;
-  }
-
   if (!supervisor.byDayPeriods[day]) {
     supervisor.byDayPeriods[day] = new Set();
-  }
-
-  if (supervisor.byDayPeriods[day].has(period)) {
-    return false;
   }
 
   if (!supervisor.byDayPeriodRanks[day]) {
     supervisor.byDayPeriodRanks[day] = new Set();
   }
 
-  if (
-    periodRank !== null &&
-    periodRank !== undefined &&
-    supervisor.byDayPeriodRanks[day].has(periodRank)
-  ) {
-    return false;
+  if (!ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS) {
+    if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
+      return false;
+    }
+
+    if (supervisor.byDayPeriods[day].has(period)) {
+      return false;
+    }
+
+    if (
+      periodRank !== null &&
+      periodRank !== undefined &&
+      supervisor.byDayPeriodRanks[day].has(periodRank)
+    ) {
+      return false;
+    }
   }
 
   for (const group of groups) {
@@ -600,22 +621,24 @@ function canSupervisorTakeProfessor(
 
     const slotKey = getSupervisorSlotKey(day, period);
 
-    if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
-      return false;
-    }
+    if (!ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS) {
+      if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
+        return false;
+      }
 
-    if (supervisor.byDayPeriods?.[day]?.has(period)) {
-      return false;
-    }
+      if (supervisor.byDayPeriods?.[day]?.has(period)) {
+        return false;
+      }
 
-    const periodRank = getPeriodRank(period);
+      const periodRank = getPeriodRank(period);
 
-    if (
-      periodRank !== null &&
-      periodRank !== undefined &&
-      supervisor.byDayPeriodRanks?.[day]?.has(periodRank)
-    ) {
-      return false;
+      if (
+        periodRank !== null &&
+        periodRank !== undefined &&
+        supervisor.byDayPeriodRanks?.[day]?.has(periodRank)
+      ) {
+        return false;
+      }
     }
   }
 
@@ -2295,24 +2318,26 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
     return false;
   }
 
-  const slotKey = getSupervisorSlotKey(day, period);
-
-  if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
-    return false;
-  }
-
-  if (supervisor.byDayPeriods?.[day]?.has(period)) {
-    return false;
-  }
-
   const rank = getPeriodRank(period);
 
-  if (
-    rank !== null &&
-    rank !== undefined &&
-    supervisor.byDayPeriodRanks?.[day]?.has(rank)
-  ) {
-    return false;
+  if (!ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS) {
+    const slotKey = getSupervisorSlotKey(day, period);
+
+    if (supervisor.occupiedSlots && supervisor.occupiedSlots.has(slotKey)) {
+      return false;
+    }
+
+    if (supervisor.byDayPeriods?.[day]?.has(period)) {
+      return false;
+    }
+
+    if (
+      rank !== null &&
+      rank !== undefined &&
+      supervisor.byDayPeriodRanks?.[day]?.has(rank)
+    ) {
+      return false;
+    }
   }
 
   if (!isValidSequentialPeriodAttachment(supervisor, day, [rank])) {
@@ -2480,7 +2505,8 @@ function assignRemainingProfessorsRelaxed({
 // الأستاذ الواحد على أكثر من مشرف.
 //
 // القاعدة الوحيدة المتبقية هنا هي القاعدة الفيزيائية:
-// المشرف لا يمكن أن يكون في نفس اليوم/الفترة مرتين.
+// المشرف لا يمكن أن يكون في نفس اليوم/الفترة مرتين
+// (إلا إذا كان ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS مفعّلًا).
 // ============================================================
 
 function forceAssignAllRemainingBundles({
@@ -2534,7 +2560,11 @@ function forceAssignAllRemainingBundles({
       const candidates = selectedSupervisorIds
         .map((id) => cand[Number(id)])
         .filter(Boolean)
-        .filter((supervisor) => !supervisor.occupiedSlots.has(slotKey))
+        .filter(
+          (supervisor) =>
+            ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS ||
+            !supervisor.occupiedSlots.has(slotKey),
+        )
         .sort((a, b) => {
           const totalA = Number(a.total || 0);
           const totalB = Number(b.total || 0);
@@ -3505,6 +3535,11 @@ async function generatePlan(
   console.log("⚙️ Minimum periods enabled:", minimumEnabled);
 
   console.log("⚙️ Minimum periods target:", minimumTarget);
+
+  console.log(
+    "⚙️ Allow same period for multiple professors:",
+    ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS,
+  );
 
   // ==========================================================
   // Plan Context
