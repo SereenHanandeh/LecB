@@ -16,7 +16,7 @@ planRouter.post("/:planId/affinities", Plan.addAffinities);
 
 planRouter.post("/:planId/generate", Plan.generate);
 
-planRouter.post("/plan/:planId/status", Plan.updateStatus);
+planRouter.post("/:planId/status", Plan.updateStatus);
 
 planRouter.get("/:planId", Plan.getPlan);
 
