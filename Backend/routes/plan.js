@@ -6,7 +6,7 @@ const planRouter = express.Router();
 
 planRouter.get("/", Plan.getPlans);
 
-planRouter.get("/accepted-supervisor-stats", getAcceptedSupervisorStats);
+planRouter.get("/accepted-supervisor-stats", Plan.getAcceptedSupervisorStats);
 planRouter.post("/", Plan.createPlan);
 
 planRouter.post("/:planId/duty-pool", Plan.setDutyPool);
