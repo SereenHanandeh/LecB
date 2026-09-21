@@ -10,6 +10,7 @@ const {
   planStats,
   getAllPlans,
   updatePlanStatusRow,
+  getAcceptedSupervisorStatsSvc,
   deletePlanSvc,
 } = require("../services/plan.js");
 
@@ -751,18 +752,23 @@ async function getAcceptedSupervisorStats(req, res) {
     });
 
   } catch (error) {
-    console.error(
-      "GET ACCEPTED SUPERVISOR STATS ERROR:",
-      error
-    );
+    console.error("====================================");
+    console.error("GET ACCEPTED SUPERVISOR STATS ERROR");
+    console.error("message:", error.message);
+    console.error("code:", error.code);
+    console.error("detail:", error.detail);
+    console.error("hint:", error.hint);
+    console.error("where:", error.where);
+    console.error("stack:", error.stack);
+    console.error("====================================");
 
     return res.status(500).json({
       success: false,
       error: "تعذر تحميل إحصائيات المشرفين.",
+      debug: error.message,
     });
   }
 }
-
 
 // =====================================================
 // Exports

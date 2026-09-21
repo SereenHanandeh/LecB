@@ -317,16 +317,6 @@ function addDaysISO(day, amount) {
 // ============================================================
 // Consecutive Day Rule
 // ============================================================
-//
-// ✅ تعديل مهم:
-//
-// سابقًا كانت الدالة تقارن أيام الأستاذ الجديدة ببعضها،
-// فإذا كان الأستاذ نفسه لديه محاضرات في يومين متتاليين
-// (مثال: 2025-11-06 و 2025-11-07) كان يُرفض من
-// جميع المشرفين ولا يمكن توزيعه إطلاقًا.
-//
-// الآن: القاعدة تقارن أيام الأستاذ مع أيام المشرف الحالية فقط.
-// ============================================================
 
 function hasConsecutiveDayConflict(supervisor, professorBundles) {
   const existingDays = new Set(
@@ -437,21 +427,31 @@ function attachGroupToSupervisor(supervisor, group, result) {
 
   supervisor.assignedGroups.add(groupId);
 
-  result.push({
-    session_group_id: groupId,
+ result.push({
+  session_group_id: groupId,
 
-    crn: group.crn,
+  crn: group.crn,
 
-    professor: group.professor_name || group.professor || "",
+  // ✅ اسم المقرر
+  course_name: group.course_name ?? "",
 
-    professor_id: group.professor_id ?? null,
+  // ✅ الأستاذ
+  professor: group.professor_name || group.professor || "",
+  professor_id: group.professor_id ?? null,
 
-    date: dateISO(group.date),
+  // ✅ التاريخ
+  date: dateISO(group.date),
 
-    period: normalizePeriod(group.period_label),
+  // ✅ الفترة
+  period: normalizePeriod(group.period_label),
 
-    supervisor_id: id,
-  });
+  // ✅ وقت البداية والنهاية
+  time_from: group.time_from ?? "",
+  time_to: group.time_to ?? "",
+
+  // ✅ المشرف
+  supervisor_id: id,
+});
 
   return true;
 }
@@ -2995,6 +2995,7 @@ function minimumSplitFallback({
           result.push({
             session_group_id: Number(group.id),
             crn: group.crn,
+            course_name: group.course_name ?? "",
             professor: group.professor_name || group.professor || "",
             professor_id: group.professor_id ?? null,
             date: dateISO(group.date),
@@ -4629,20 +4630,21 @@ async function generatePlan(
   }
 
   const distributionRows = result.map((row) => {
-    const supervisor = supervisors.find(
-      (s) => Number(s.id) === Number(row.supervisor_id),
-    );
-    return {
-      "Course Name": row.course_name,
-      CRN: row.crn,
-      Professor: row.professor_name,
-      Date: row.date,
-      "Time From": row.time_from,
-      "Time To": row.time_to,
-      Period: row.period_label,
-      Supervisor: supervisor?.name ?? row.supervisor_id,
-    };
-  });
+  const supervisor = supervisors.find(
+    (s) => Number(s.id) === Number(row.supervisor_id),
+  );
+
+  return {
+    "Course Name": row.course_name ?? "",
+    CRN: row.crn ?? "",
+    Professor: row.professor ?? row.professor_name ?? "",
+    Date: row.date ?? "",
+    "Time From": row.time_from ?? "",
+    "Time To": row.time_to ?? "",
+    Period: row.period ?? row.period_label ?? "",
+    Supervisor: supervisor?.name ?? row.supervisor_id ?? "",
+  };
+});
 
   const conflictsRows = conflicts.map((item) => ({
     Date: item.date ?? "",

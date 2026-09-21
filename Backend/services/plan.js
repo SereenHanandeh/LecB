@@ -1145,6 +1145,7 @@ async function deletePlanSvc(planId) {
 // إحصائيات المشرفين في جميع الخطط المقبولة
 // =====================================================
 
+
 async function getAcceptedSupervisorStatsSvc() {
   const result = await pool.query(`
     SELECT
@@ -1152,29 +1153,41 @@ async function getAcceptedSupervisorStatsSvc() {
       s.name AS supervisor_name,
 
       COUNT(
-        DISTINCT (
-          a.plan_id,
-          g.date,
-          g.period_label
-        )
+        DISTINCT CASE
+          WHEN p.id IS NOT NULL THEN
+            a.plan_id::text
+            || '|'
+            || g.date::text
+            || '|'
+            || g.period_label::text
+        END
       ) AS total_periods,
 
-      COUNT(*) AS total_assignments,
+      COUNT(
+        CASE
+          WHEN p.id IS NOT NULL THEN a.id
+        END
+      ) AS total_assignments,
 
-      COUNT(DISTINCT a.plan_id) AS accepted_plans
+      COUNT(
+        DISTINCT CASE
+          WHEN p.id IS NOT NULL THEN a.plan_id
+        END
+      ) AS accepted_plans
 
-    FROM assignments a
+    FROM supervisors s
 
-    INNER JOIN plans p
+    LEFT JOIN assignments a
+      ON a.supervisor_id = s.id
+
+    LEFT JOIN plans p
       ON p.id = a.plan_id
+      AND p.status = 'accepted'
 
-    INNER JOIN supervisors s
-      ON s.id = a.supervisor_id
-
-    INNER JOIN session_groups g
+    LEFT JOIN session_groups g
       ON g.id = a.session_group_id
 
-    WHERE p.status = 'accepted'
+    WHERE s.active = TRUE
 
     GROUP BY s.id, s.name
 
@@ -1183,6 +1196,7 @@ async function getAcceptedSupervisorStatsSvc() {
 
   return result.rows;
 }
+
 
 
 
