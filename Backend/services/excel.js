@@ -2914,31 +2914,7 @@ function minimumRebalanceAssignments({
 // Fallback engine below — checks ONE session, not a whole
 // professor)
 // ============================================================
-  if (relaxedFallbackResult.details.length) {
-    const relaxedRows = relaxedFallbackResult.details.map((item) => {
-      const supervisor = supervisors.find(
-        (s) => Number(s.id) === Number(item.supervisor_id),
-      );
 
-      return {
-        Professor: item.professor,
-        "Professor ID": item.professor_id ?? "",
-        Periods: item.periods,
-        Supervisor: supervisor?.name ?? item.supervisor_id,
-        Note:
-          "تم التوزيع بتجاهل قاعدة تسلسل الفترات و/أو منع الأيام المتتالية بسبب قلة عدد المشرفين",
-      };
-    });
-
-    const relaxedSheet = xlsx.utils.json_to_sheet(relaxedRows);
-
-    xlsx.utils.book_append_sheet(
-      workbook,
-      relaxedSheet,
-      "Relaxed Assignments",
-    );
-  }
-  
 function canSingleBundleFitSupervisor(supervisor, day, period) {
   if (!supervisor || !day || !period) {
     return false;
@@ -5082,6 +5058,25 @@ async function generatePlan(
 
   console.log("🧩 Minimum Split Fallback result:", minimumSplitResult);
 
+  if (relaxedFallbackResult.details.length) {
+    const relaxedRows = relaxedFallbackResult.details.map((item) => {
+      const supervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.supervisor_id),
+      );
+
+      return {
+        Professor: item.professor,
+        "Professor ID": item.professor_id ?? "",
+        Periods: item.periods,
+        Supervisor: supervisor?.name ?? item.supervisor_id,
+        Note: "تم التوزيع بتجاهل قاعدة تسلسل الفترات و/أو منع الأيام المتتالية بسبب قلة عدد المشرفين",
+      };
+    });
+
+    const relaxedSheet = xlsx.utils.json_to_sheet(relaxedRows);
+
+    xlsx.utils.book_append_sheet(workbook, relaxedSheet, "Relaxed Assignments");
+  }
   // ==========================================================
   // FINAL CONSISTENCY REBUILD
   // ==========================================================
