@@ -4634,15 +4634,14 @@ async function generatePlan(
     );
 
     return {
-
+      courseName: row.name,
       CRN: row.crn,
-
       Professor: row.professor,
-
+      day: row.day,
       Date: row.date,
-
+      timeFrom: row.timeFrom,
+      timeTo: row.timeTo,
       Period: row.period,
-
       Supervisor: supervisor?.name ?? row.supervisor_id,
     };
   });
