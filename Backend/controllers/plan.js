@@ -695,6 +695,36 @@ async function updateStatus(req, res) {
     return handleError(res, err, "Error updating plan status");
   }
 }
+
+async function deletePlan(req, res) {
+  try {
+    const planId = Number(req.params.id);
+
+    if (!Number.isInteger(planId)) {
+      return res.status(400).json({
+        success: false,
+        error: "رقم الخطة غير صحيح",
+      });
+    }
+
+    await pool.query(
+      `DELETE FROM plans WHERE id = $1`,
+      [planId]
+    );
+
+    return res.json({
+      success: true,
+      message: "تم حذف الخطة بنجاح",
+    });
+  } catch (error) {
+    console.error("🔴 DELETE PLAN ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "تعذر حذف الخطة",
+    });
+  }
+}
 // =====================================================
 // Exports
 // =====================================================
@@ -712,4 +742,5 @@ module.exports = {
   moveAssignment,
   getStats,
   updateStatus,
+  deletePlan
 };
