@@ -4634,7 +4634,7 @@ async function generatePlan(
     );
 
     return {
-      courseName: row.name,
+      courseName: row.course_name,
       CRN: row.crn,
       Professor: row.professor,
       day: row.day,

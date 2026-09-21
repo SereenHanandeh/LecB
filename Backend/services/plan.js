@@ -621,7 +621,7 @@ async function fetchPlan(planId) {
 
     -- بيانات Session Group
     sg.crn,
-    sg.name,
+    sg.course_name,
     sg.date,
     sg.period_label,
     sg.time_from,
