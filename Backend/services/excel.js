@@ -348,37 +348,6 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
   return sortedNew[0] === existingMax + 1;
 }
 
-  // --------------------------------------------------------
-  // Sequential Period Attachment Rule (Hard Rule)
-  // --------------------------------------------------------
-
-  const newRanksByDay = new Map();
-
-  for (const bundle of professorBundles) {
-    const representative = bundle.groups?.[0];
-
-    const day = dateISO(representative.date);
-    const period = normalizePeriod(representative.period_label);
-    const rank = getPeriodRank(period);
-
-    if (!day || rank === null || rank === undefined) {
-      continue;
-    }
-
-    if (!newRanksByDay.has(day)) {
-      newRanksByDay.set(day, []);
-    }
-
-    newRanksByDay.get(day).push(rank);
-  }
-
-  for (const [day, ranks] of newRanksByDay) {
-    if (!isValidSequentialPeriodAttachment(supervisor, day, ranks)) {
-      return false;
-    }
-  }
-
-
 function addDaysISO(day, amount) {
   const match = String(day).match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
