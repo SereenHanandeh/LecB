@@ -2945,24 +2945,216 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
   return true;
 }
 
+
+// ============================================================
+// SINGLE PROFESSOR DAY SPLIT (EQUAL DISTRIBUTION)
+// ============================================================
+//
+// إذا كان يوجد يوم فيه دكتور واحد فقط (كل الفترات بهذا اليوم
+// تخص نفس الدكتور)، ويوجد أكثر من مشرف محدد بالخطة، نوزع
+// فترات هذا اليوم بالتساوي قدر الإمكان على المشرفين المحددين
+// بدلاً من إعطاء كل الفترات لمشرف واحد فقط.
+//
+// لا ينطبق هذا على الدكاترة الملزمين (Lock / Preassignment /
+// Affinity) — هؤلاء يبقون على القاعدة العادية (مشرف واحد
+// لكل دكتور بالكامل).
+// ============================================================
+
+function distributeSingleProfessorDays({
+  professorGroups,
+  forcedProfessorAssignments,
+  selectedSupervisorIds,
+  cand,
+  result,
+  bundleAssignments,
+  conflicts,
+  splitProfessorKeys,
+  variant,
+}) {
+  console.log("========================================");
+  console.log("📆 CHECKING SINGLE-PROFESSOR DAYS");
+  console.log("========================================");
+
+  if (selectedSupervisorIds.length <= 1) {
+    console.log("📆 Skipped: only one supervisor selected.");
+    return { daysSplit: 0 };
+  }
+
+  // نجمع الـ bundles حسب اليوم عبر كل الدكاترة غير الملزمين
+  const dayMap = new Map(); // day -> Map(professorKey -> { professor, bundles })
+
+  for (const professor of professorGroups) {
+    for (const bundle of professor.bundles) {
+      const representative = bundle.groups?.[0];
+      if (!representative) continue;
+
+      const day = dateISO(representative.date);
+      if (!day) continue;
+
+      if (!dayMap.has(day)) {
+        dayMap.set(day, new Map());
+      }
+
+      const profMap = dayMap.get(day);
+
+      if (!profMap.has(professor.key)) {
+        profMap.set(professor.key, { professor, bundles: [] });
+      }
+
+      profMap.get(professor.key).bundles.push(bundle);
+    }
+  }
+
+  let daysSplit = 0;
+
+  for (const [day, profMap] of dayMap) {
+    if (profMap.size !== 1) {
+      continue; // أكثر من دكتور بهذا اليوم، لا ينطبق الاستثناء
+    }
+
+    const [[professorKey, entry]] = profMap;
+
+    if (forcedProfessorAssignments.has(professorKey)) {
+      continue; // دكتور ملزم لمشرف محدد، يبقى على القاعدة العادية
+    }
+
+    const dayBundles = entry.bundles;
+
+    if (dayBundles.length <= 1) {
+      continue; // فترة واحدة فقط، لا داعي للتوزيع
+    }
+
+    const professor = entry.professor;
+
+    const sortedBundles = [...dayBundles].sort((a, b) =>
+      sortPeriods(a.period, b.period),
+    );
+
+    console.log(
+      `📆 Single-professor day detected: ${day} -> ${professor.professor} ` +
+        `(${sortedBundles.length} periods) — splitting across ${selectedSupervisorIds.length} supervisors.`,
+    );
+
+    let splitCount = 0;
+
+    for (const bundle of sortedBundles) {
+      const representative = bundle.groups?.[0];
+      if (!representative) continue;
+
+      const bDay = dateISO(representative.date);
+      const period = normalizePeriod(representative.period_label);
+
+      const candidates = selectedSupervisorIds
+        .map((id) => cand[Number(id)])
+        .filter(Boolean)
+        .filter((sup) => canSingleBundleFitSupervisor(sup, bDay, period))
+        .sort((a, b) => {
+          const totalA = Number(a.total || 0);
+          const totalB = Number(b.total || 0);
+
+          if (totalA !== totalB) {
+            return totalA - totalB;
+          }
+
+          return (
+            seededShuffle(`${variant}-${a.id}`) -
+            seededShuffle(`${variant}-${b.id}`)
+          );
+        });
+
+      if (!candidates.length) {
+        conflicts.push({
+          type: "NO_SUPERVISOR_FOR_SINGLE_PROFESSOR_DAY_PERIOD",
+          professor: professor.professor,
+          professor_id: professor.professor_id,
+          date: bDay,
+          period,
+          message:
+            "No supervisor could take this period while splitting a single-professor day.",
+        });
+
+        continue;
+      }
+
+      const chosen = candidates[0];
+
+      const groupIds = [];
+
+      for (const group of bundle.groups || []) {
+        const attached = attachGroupToSupervisor(chosen, group, result);
+
+        if (attached) {
+          groupIds.push(Number(group.id));
+        }
+      }
+
+      if (!groupIds.length) {
+        continue;
+      }
+
+      if (!chosen.byDay[bDay]) {
+        chosen.byDay[bDay] = 0;
+      }
+
+      chosen.byDay[bDay] += 1;
+      chosen.total += 1;
+      chosen.lastDay = bDay;
+
+      if (!chosen.byDayPeriods[bDay]) {
+        chosen.byDayPeriods[bDay] = new Set();
+      }
+      chosen.byDayPeriods[bDay].add(period);
+
+      const rank = getPeriodRank(period);
+
+      if (!chosen.byDayPeriodRanks[bDay]) {
+        chosen.byDayPeriodRanks[bDay] = new Set();
+      }
+
+      if (rank !== null && rank !== undefined) {
+        chosen.byDayPeriodRanks[bDay].add(rank);
+      }
+
+      chosen.occupiedSlots.add(getSupervisorSlotKey(bDay, period));
+      chosen.assignedProfessors.add(professorKey);
+
+      bundleAssignments.set(bundle.key, chosen.id);
+
+      splitCount++;
+
+      console.log(`   ↳ ${bDay} ${period} -> Supervisor ${chosen.id}`);
+    }
+
+    if (splitCount > 1) {
+      splitProfessorKeys.add(professorKey);
+      daysSplit++;
+    }
+
+    // إزالة فترات هذا اليوم من قائمة فترات الدكتور الأصلية
+    // حتى لا تتم معالجتها مرة أخرى بالتوزيع العادي (الدكتور
+    // ككتلة واحدة).
+    const dayBundleKeys = new Set(dayBundles.map((b) => b.key));
+
+    professor.bundles = professor.bundles.filter(
+      (b) => !dayBundleKeys.has(b.key),
+    );
+  }
+
+  for (let i = professorGroups.length - 1; i >= 0; i--) {
+    if (!professorGroups[i].bundles.length) {
+      professorGroups.splice(i, 1);
+    }
+  }
+
+  console.log("========================================");
+  console.log(`📆 Single-professor days split: ${daysSplit}`);
+  console.log("========================================");
+
+  return { daysSplit };
+}
+
 // ============================================================
 // MINIMUM SPLIT FALLBACK ENGINE (LAST RESORT)
-// ============================================================
-//
-// إذا فشلت كل المحاولات السابقة (Rebalance / Minimum Rebalance /
-// Swap) في إيصال كل مشرف للحد الأدنى - لأن الدكاترة "كتلة واحدة"
-// غير قابلة للتجزئة وأحجامهم غير متساوية - هذا المحرك يسمح،
-// فقط كملاذ أخير، بنقل محاضرة واحدة (Bundle واحد) من دكتور
-// معيّن من مشرف عنده فائض واضح إلى مشرف عنده عجز، حتى لو أدى
-// هذا لتوزيع نفس الدكتور بين مشرفين اثنين.
-//
-// قواعد صارمة:
-// - لا ننقل من/إلى Forced Professors (Lock / Preassignment / Affinity).
-// - لا ننقل إذا كان المشرف المصدر سينزل تحت الحد الأدنى بعد النقل.
-// - لا ننقل إذا كسرنا Slot / Period Rank / Consecutive Day.
-// - كل نقلة هي Bundle واحد بس (محاضرة واحدة)، مش كل محاضرات الدكتور.
-// - كل تقسيم متعمد يتم تسجيله في splitProfessorKeys / details
-//   حتى لا يُحتسب لاحقًا كخطأ "Professor Uniqueness Violation".
 // ============================================================
 
 function minimumSplitFallback({
@@ -2978,7 +3170,7 @@ function minimumSplitFallback({
   minimumEnabled,
   minimumTarget,
 }) {
-  console.log("========================================");
+  console.log("=======================================");
   console.log("🧩 STARTING MINIMUM SPLIT FALLBACK");
   console.log("========================================");
 
@@ -4545,6 +4737,30 @@ async function generatePlan(
     }
   }
 
+
+    // ==========================================================
+  // Single-Professor-Day Split (Equal Distribution)
+  // ==========================================================
+
+  const singleDaySplitProfessorKeys = new Set();
+
+  const singleDaySplitResult = distributeSingleProfessorDays({
+    professorGroups,
+    forcedProfessorAssignments,
+    selectedSupervisorIds,
+    cand,
+    result,
+    bundleAssignments,
+    conflicts,
+    splitProfessorKeys: singleDaySplitProfessorKeys,
+    variant,
+  });
+
+  console.log(
+    "📆 Single-Professor-Day Split result:",
+    singleDaySplitResult,
+  );
+
   // ==========================================================
   // Forced Professors FIRST
   // ==========================================================
@@ -5324,9 +5540,11 @@ async function generatePlan(
       if (
         minimumSplitResult.splitProfessorKeys.has(
           professorKey,
+        ) ||
+        singleDaySplitProfessorKeys.has(
+          professorKey,
         )
       ) {
-        // تقسيم متعمّد من محرك الحد الأدنى، مش خطأ.
         intentionalMinimumSplits++;
         continue;
       }
