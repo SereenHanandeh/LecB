@@ -963,6 +963,7 @@ async function getAllPlans() {
       p.excel_batch_id,
       p.date_from,
       p.date_to,
+      p.category,
       p.created_at,
 
       -- عدد المشرفين المختارين للخطة
@@ -988,7 +989,6 @@ async function getAllPlans() {
 
   return result.rows;
 }
-
 
 async function saveAssignments(planId, assignments = []) {
   console.log("========================================");
