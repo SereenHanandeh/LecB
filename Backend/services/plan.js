@@ -964,6 +964,7 @@ async function getAllPlans() {
       p.date_from,
       p.date_to,
       p.category,
+      p.status,
       p.created_at,
 
       -- عدد المشرفين المختارين للخطة
