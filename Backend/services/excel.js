@@ -315,7 +315,6 @@ function getSupervisorSlotKey(day, period) {
   return `${day}|${normalizePeriod(period)}`;
 }
 
-
 function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
   const cleanRanks = (newRanks || []).filter(
     (rank) => rank !== null && rank !== undefined,
@@ -629,7 +628,12 @@ function assignBundleToSupervisor(
 // Check Professor
 // ============================================================
 
-function canSupervisorTakeProfessor(supervisor, professorBundles) {
+function canSupervisorTakeProfessor(
+  supervisor,
+  professorBundles,
+  options = {},
+) {
+  const { relaxed = false } = options;
   if (!supervisor || !professorBundles?.length) {
     return false;
   }
@@ -692,38 +696,46 @@ function canSupervisorTakeProfessor(supervisor, professorBundles) {
   // Sequential Period Attachment Rule (Hard Rule)
   // --------------------------------------------------------
 
-  const newRanksByDay = new Map();
+  // --------------------------------------------------------
+  // Sequential Period Attachment Rule (Hard Rule)
+  // تُتجاهل فقط في وضع Relaxed (ملاذ أخير لضمان تغطية كل الأساتذة)
+  // --------------------------------------------------------
 
-  for (const bundle of professorBundles) {
-    const representative = bundle.groups?.[0];
+  if (!relaxed) {
+    const newRanksByDay = new Map();
 
-    const day = dateISO(representative.date);
-    const period = normalizePeriod(representative.period_label);
-    const rank = getPeriodRank(period);
+    for (const bundle of professorBundles) {
+      const representative = bundle.groups?.[0];
 
-    if (!day || rank === null || rank === undefined) {
-      continue;
+      const day = dateISO(representative.date);
+      const period = normalizePeriod(representative.period_label);
+      const rank = getPeriodRank(period);
+
+      if (!day || rank === null || rank === undefined) {
+        continue;
+      }
+
+      if (!newRanksByDay.has(day)) {
+        newRanksByDay.set(day, []);
+      }
+
+      newRanksByDay.get(day).push(rank);
     }
 
-    if (!newRanksByDay.has(day)) {
-      newRanksByDay.set(day, []);
+    for (const [day, ranks] of newRanksByDay) {
+      if (!isValidSequentialPeriodAttachment(supervisor, day, ranks)) {
+        return false;
+      }
     }
 
-    newRanksByDay.get(day).push(rank);
-  }
-
-  for (const [day, ranks] of newRanksByDay) {
-    if (!isValidSequentialPeriodAttachment(supervisor, day, ranks)) {
+    if (hasConsecutiveDayConflict(supervisor, professorBundles)) {
       return false;
     }
   }
 
-  if (hasConsecutiveDayConflict(supervisor, professorBundles)) {
-    return false;
-  }
-
   return true;
 }
+
 // ============================================================
 // Consecutive Period Score
 // ============================================================
@@ -1092,6 +1104,7 @@ function assignProfessorToSupervisor(
   cand,
   bundleAssignments,
   professorAssignments,
+  options = {},
 ) {
   const id = Number(supervisorId);
 
@@ -1105,7 +1118,7 @@ function assignProfessorToSupervisor(
 
   const supervisor = cand[id];
 
-  if (!canSupervisorTakeProfessor(supervisor, professorBundles)) {
+  if (!canSupervisorTakeProfessor(supervisor, professorBundles, options)) {
     return false;
   }
 
@@ -2901,7 +2914,31 @@ function minimumRebalanceAssignments({
 // Fallback engine below — checks ONE session, not a whole
 // professor)
 // ============================================================
+  if (relaxedFallbackResult.details.length) {
+    const relaxedRows = relaxedFallbackResult.details.map((item) => {
+      const supervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.supervisor_id),
+      );
 
+      return {
+        Professor: item.professor,
+        "Professor ID": item.professor_id ?? "",
+        Periods: item.periods,
+        Supervisor: supervisor?.name ?? item.supervisor_id,
+        Note:
+          "تم التوزيع بتجاهل قاعدة تسلسل الفترات و/أو منع الأيام المتتالية بسبب قلة عدد المشرفين",
+      };
+    });
+
+    const relaxedSheet = xlsx.utils.json_to_sheet(relaxedRows);
+
+    xlsx.utils.book_append_sheet(
+      workbook,
+      relaxedSheet,
+      "Relaxed Assignments",
+    );
+  }
+  
 function canSingleBundleFitSupervisor(supervisor, day, period) {
   if (!supervisor || !day || !period) {
     return false;
@@ -2927,7 +2964,7 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
     return false;
   }
 
-   if (!isValidSequentialPeriodAttachment(supervisor, day, [rank])) {
+  if (!isValidSequentialPeriodAttachment(supervisor, day, [rank])) {
     return false;
   }
 
@@ -2945,19 +2982,157 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
   return true;
 }
 
+// ============================================================
+// RELAXED FALLBACK ASSIGNMENT (LAST RESORT)
+// ============================================================
+//
+// الهدف:
+// عدم ترك أي أستاذ بدون مشرف بسبب قلة عدد المشرفين المختارين
+// مقارنة بعدد الأساتذة. نعيد محاولة توزيع كل أستاذ لم يُوزَّع،
+// بتجاهل القواعد المرنة فقط:
+//   - تسلسل الفترات (Sequential Period Attachment)
+//   - منع الأيام المتتالية (Consecutive Day Rule)
+//
+// القاعدة الفيزيائية الوحيدة التي تبقى صارمة دائمًا:
+// نفس المشرف لا يمكن أن يكون في يوم/فترة واحدة مرتين بنفس الوقت
+// (تعارض Slot حقيقي) — هذه تبقى محمية داخل canSupervisorTakeProfessor
+// حتى في الوضع المرن.
+// ============================================================
 
+function assignRemainingProfessorsRelaxed({
+  professorGroups,
+  selectedSupervisorIds,
+  cand,
+  result,
+  bundleAssignments,
+  professorAssignments,
+  forcedProfessorAssignments,
+  conflicts,
+  variant,
+}) {
+  console.log("========================================");
+  console.log("🆘 STARTING RELAXED FALLBACK ASSIGNMENT");
+  console.log("========================================");
+
+  const unassigned = professorGroups.filter(
+    (professor) => !professorAssignments.has(professor.key),
+  );
+
+  if (!unassigned.length) {
+    console.log("🆘 No unassigned professors. Skipping relaxed fallback.");
+
+    return { assigned: 0, stillUnassigned: 0, details: [] };
+  }
+
+  console.log(
+    `🆘 Unassigned professors before relaxed pass: ${unassigned.length}`,
+  );
+
+  let assignedCount = 0;
+
+  const details = [];
+
+  for (const professor of unassigned) {
+    // احتياطًا: لا نلمس Forced (عمليًا هذا لن يصل هنا لأنه يُعالج قبل)
+    if (forcedProfessorAssignments.has(professor.key)) {
+      continue;
+    }
+
+    const ranked = [];
+
+    for (const supervisorId of selectedSupervisorIds) {
+      const supervisor = cand[Number(supervisorId)];
+
+      if (!supervisor) continue;
+
+      // النسخة المرنة: نتجاهل تسلسل الفترات ومنع الأيام المتتالية،
+      // لكن نبقي إلزام عدم تعارض الـ Slot الفعلي.
+      if (
+        !canSupervisorTakeProfessor(supervisor, professor.bundles, {
+          relaxed: true,
+        })
+      ) {
+        continue;
+      }
+
+      ranked.push({
+        supervisorId: Number(supervisorId),
+        currentTotal: Number(supervisor.total || 0),
+        random: Math.random(),
+      });
+    }
+
+    if (!ranked.length) {
+      // لا يوجد ولا مشرف واحد يقدر ياخذ الأستاذ حتى بدون القواعد
+      // المرنة — هذا تعارض فيزيائي حقيقي (أكثر من أستاذ بنفس
+      // اليوم/الفترة من عدد المشرفين المتاحين لتلك اللحظة بالضبط)
+      // ولا يوجد حل رياضي له بأي عدد قواعد نتنازل عنها.
+      continue;
+    }
+
+    // نفضّل الأقل حملًا للحفاظ على أكبر قدر ممكن من العدالة
+    ranked.sort((a, b) => {
+      if (a.currentTotal !== b.currentTotal) {
+        return a.currentTotal - b.currentTotal;
+      }
+
+      return a.random - b.random;
+    });
+
+    const chosenSupervisorId = ranked[0].supervisorId;
+
+    const ok = assignProfessorToSupervisor(
+      professor.key,
+      professor.bundles,
+      chosenSupervisorId,
+      result,
+      cand,
+      bundleAssignments,
+      professorAssignments,
+      { relaxed: true },
+    );
+
+    if (ok) {
+      assignedCount++;
+
+      // نحذف أي conflict سابق سُجّل لهذا الأستاذ بسبب عدم وجود مشرف
+      for (let i = conflicts.length - 1; i >= 0; i--) {
+        if (
+          conflicts[i].type === "NO_SUPERVISOR_FOR_PROFESSOR" &&
+          conflicts[i].professor_id === professor.professor_id &&
+          conflicts[i].professor === professor.professor
+        ) {
+          conflicts.splice(i, 1);
+        }
+      }
+
+      details.push({
+        professor: professor.professor,
+        professor_id: professor.professor_id,
+        supervisor_id: chosenSupervisorId,
+        periods: professor.bundles.length,
+      });
+
+      console.log(
+        `🆘 RELAXED ASSIGNMENT: ${professor.professor} -> Supervisor ${chosenSupervisorId}`,
+      );
+    }
+  }
+
+  const stillUnassigned = unassigned.length - assignedCount;
+
+  console.log("========================================");
+  console.log("🆘 RELAXED FALLBACK ASSIGNMENT FINISHED");
+  console.log("========================================");
+  console.log(`🆘 Assigned via relaxed fallback: ${assignedCount}`);
+  console.log(
+    `🆘 Still unassigned (real physical conflict): ${stillUnassigned}`,
+  );
+
+  return { assigned: assignedCount, stillUnassigned, details };
+}
 // ============================================================
 // SINGLE PROFESSOR DAY SPLIT (EQUAL DISTRIBUTION)
-// ============================================================
-//
-// إذا كان يوجد يوم فيه دكتور واحد فقط (كل الفترات بهذا اليوم
-// تخص نفس الدكتور)، ويوجد أكثر من مشرف محدد بالخطة، نوزع
-// فترات هذا اليوم بالتساوي قدر الإمكان على المشرفين المحددين
-// بدلاً من إعطاء كل الفترات لمشرف واحد فقط.
-//
-// لا ينطبق هذا على الدكاترة الملزمين (Lock / Preassignment /
-// Affinity) — هؤلاء يبقون على القاعدة العادية (مشرف واحد
-// لكل دكتور بالكامل).
 // ============================================================
 
 function distributeSingleProfessorDays({
@@ -3907,55 +4082,31 @@ async function generatePlan(
   // Support Object options
   // ----------------------------------------------------------
 
-  if (
-    minimumPeriodsEnabled &&
-    typeof minimumPeriodsEnabled === "object"
-  ) {
+  if (minimumPeriodsEnabled && typeof minimumPeriodsEnabled === "object") {
     const options = minimumPeriodsEnabled;
 
     minimumPeriodsEnabled = Boolean(
-      options.minimumPeriodsEnabled ??
-        options.enabled ??
-        false,
+      options.minimumPeriodsEnabled ?? options.enabled ?? false,
     );
 
-    minimumPeriods = Number(
-      options.minimumPeriods ??
-        options.minimum ??
-        4,
-    );
+    minimumPeriods = Number(options.minimumPeriods ?? options.minimum ?? 4);
   }
 
-  const minimumEnabled = Boolean(
-    minimumPeriodsEnabled,
-  );
+  const minimumEnabled = Boolean(minimumPeriodsEnabled);
 
-  let minimumTarget = Number(
-    minimumPeriods,
-  );
+  let minimumTarget = Number(minimumPeriods);
 
-  if (
-    !Number.isInteger(minimumTarget) ||
-    minimumTarget < 1
-  ) {
+  if (!Number.isInteger(minimumTarget) || minimumTarget < 1) {
     minimumTarget = 4;
   }
 
   console.log("========================================");
-  console.log(
-    `🚀 Generating plan ${planId}, variant ${variant}`,
-  );
+  console.log(`🚀 Generating plan ${planId}, variant ${variant}`);
   console.log("========================================");
 
-  console.log(
-    "⚙️ Minimum periods enabled:",
-    minimumEnabled,
-  );
+  console.log("⚙️ Minimum periods enabled:", minimumEnabled);
 
-  console.log(
-    "⚙️ Minimum periods target:",
-    minimumTarget,
-  );
+  console.log("⚙️ Minimum periods target:", minimumTarget);
 
   // ==========================================================
   // Plan Context
@@ -3964,27 +4115,16 @@ async function generatePlan(
   const ctx = await getPlanContext(planId);
 
   if (!ctx) {
-    throw new Error(
-      `Plan ${planId} was not found.`,
-    );
+    throw new Error(`Plan ${planId} was not found.`);
   }
 
-  const {
-    groups = [],
-    supervisors = [],
-    pre = [],
-    locks = [],
-    aff = [],
-  } = ctx;
+  const { groups = [], supervisors = [], pre = [], locks = [], aff = [] } = ctx;
 
   console.log("========================================");
   console.log("🔎 DEBUG PLAN DATA");
   console.log("========================================");
 
-  console.log(
-    "📦 Groups from getPlanContext:",
-    groups.length,
-  );
+  console.log("📦 Groups from getPlanContext:", groups.length);
 
   const groupsByDate = {};
 
@@ -4000,14 +4140,8 @@ async function generatePlan(
 
   console.log("📅 Groups by date:");
 
-  for (const [day, dayGroups] of Object.entries(
-    groupsByDate,
-  )) {
-    console.log(
-      day,
-      "=>",
-      dayGroups.length,
-    );
+  for (const [day, dayGroups] of Object.entries(groupsByDate)) {
+    console.log(day, "=>", dayGroups.length);
   }
 
   console.log("========================================");
@@ -4017,9 +4151,7 @@ async function generatePlan(
   // ==========================================================
 
   if (!groups.length) {
-    console.warn(
-      "⚠️ No session groups found for this plan.",
-    );
+    console.warn("⚠️ No session groups found for this plan.");
 
     await saveAssignments(planId, []);
 
@@ -4057,9 +4189,7 @@ async function generatePlan(
       swapIterations: 0,
 
       minimumPeriodsEnabled: minimumEnabled,
-      minimumPeriods: minimumEnabled
-        ? minimumTarget
-        : null,
+      minimumPeriods: minimumEnabled ? minimumTarget : null,
 
       minimumsReached: false,
       minimumStatistics: [],
@@ -4071,9 +4201,7 @@ async function generatePlan(
   }
 
   if (!supervisors.length) {
-    throw new Error(
-      "No supervisors are available for this plan.",
-    );
+    throw new Error("No supervisors are available for this plan.");
   }
 
   // ==========================================================
@@ -4085,20 +4213,12 @@ async function generatePlan(
   try {
     const dutyPool = await getDutyPool(planId);
 
-    if (
-      Array.isArray(dutyPool) &&
-      dutyPool.length
-    ) {
-      selectedSupervisorIds =
-        dutyPool
-          .map((item) =>
-            Number(
-              item.supervisor_id ??
-                item.supervisorId ??
-                item.id,
-            ),
-          )
-          .filter(Number.isFinite);
+    if (Array.isArray(dutyPool) && dutyPool.length) {
+      selectedSupervisorIds = dutyPool
+        .map((item) =>
+          Number(item.supervisor_id ?? item.supervisorId ?? item.id),
+        )
+        .filter(Number.isFinite);
     }
   } catch (error) {
     console.warn(
@@ -4107,15 +4227,12 @@ async function generatePlan(
   }
 
   if (!selectedSupervisorIds.length) {
-    selectedSupervisorIds =
-      supervisors
-        .map((s) => Number(s.id))
-        .filter(Number.isFinite);
+    selectedSupervisorIds = supervisors
+      .map((s) => Number(s.id))
+      .filter(Number.isFinite);
   }
 
-  selectedSupervisorIds = Array.from(
-    new Set(selectedSupervisorIds),
-  );
+  selectedSupervisorIds = Array.from(new Set(selectedSupervisorIds));
 
   console.log(
     `👥 Selected supervisors: ${selectedSupervisorIds.length}`,
@@ -4123,9 +4240,7 @@ async function generatePlan(
   );
 
   if (!selectedSupervisorIds.length) {
-    throw new Error(
-      "No supervisors were selected for this plan.",
-    );
+    throw new Error("No supervisors were selected for this plan.");
   }
 
   // ==========================================================
@@ -4161,9 +4276,7 @@ async function generatePlan(
       `🎯 Minimum Period Rule ENABLED: Every selected supervisor should receive at least ${minimumTarget} periods when feasible.`,
     );
   } else {
-    console.log(
-      "🎯 Minimum Period Rule DISABLED.",
-    );
+    console.log("🎯 Minimum Period Rule DISABLED.");
   }
 
   // ==========================================================
@@ -4175,15 +4288,10 @@ async function generatePlan(
   const professorNameAffinity = new Map();
 
   console.log("========================================");
-  console.log(
-    "🔗 LOADING PROFESSOR AFFINITIES",
-  );
+  console.log("🔗 LOADING PROFESSOR AFFINITIES");
   console.log("========================================");
 
-  console.log(
-    "Affinity rows from DB:",
-    aff.length,
-  );
+  console.log("Affinity rows from DB:", aff.length);
 
   // ==========================================================
   // Result
@@ -4200,69 +4308,43 @@ async function generatePlan(
   // ==========================================================
 
   for (const item of aff) {
-    const supervisorId = Number(
-      item.supervisor_id ??
-        item.supervisorId,
-    );
+    const supervisorId = Number(item.supervisor_id ?? item.supervisorId);
 
     if (!Number.isFinite(supervisorId)) {
-      console.warn(
-        "⚠️ Affinity skipped: invalid supervisor ID",
-        item,
-      );
+      console.warn("⚠️ Affinity skipped: invalid supervisor ID", item);
 
       continue;
     }
 
     if (!cand[supervisorId]) {
       conflicts.push({
-        type:
-          "AFFINITY_SUPERVISOR_NOT_SELECTED",
+        type: "AFFINITY_SUPERVISOR_NOT_SELECTED",
 
-        professor:
-          item.professor_name ??
-          item.name ??
-          "",
+        professor: item.professor_name ?? item.name ?? "",
 
-        professor_id:
-          item.professor_id ?? null,
+        professor_id: item.professor_id ?? null,
 
         supervisor_id: supervisorId,
 
-        message:
-          "The affinity supervisor is not in the selected Duty Pool.",
+        message: "The affinity supervisor is not in the selected Duty Pool.",
       });
 
       continue;
     }
 
-    const professorId = Number(
-      item.professor_id ??
-        item.professorId ??
-        null,
-    );
+    const professorId = Number(item.professor_id ?? item.professorId ?? null);
 
     if (Number.isFinite(professorId)) {
-      professorAffinity.set(
-        professorId,
-        supervisorId,
-      );
+      professorAffinity.set(professorId, supervisorId);
     }
 
-    const professorName = String(
-      item.professor_name ??
-        item.name ??
-        "",
-    )
+    const professorName = String(item.professor_name ?? item.name ?? "")
       .trim()
       .replace(/\s+/g, " ")
       .toLowerCase();
 
     if (professorName) {
-      professorNameAffinity.set(
-        professorName,
-        supervisorId,
-      );
+      professorNameAffinity.set(professorName, supervisorId);
     }
 
     console.log(
@@ -4270,13 +4352,9 @@ async function generatePlan(
     );
   }
 
-  console.log(
-    `🔗 Professor ID affinities: ${professorAffinity.size}`,
-  );
+  console.log(`🔗 Professor ID affinities: ${professorAffinity.size}`);
 
-  console.log(
-    `🔗 Professor name affinities: ${professorNameAffinity.size}`,
-  );
+  console.log(`🔗 Professor name affinities: ${professorNameAffinity.size}`);
 
   // ==========================================================
   // Build Bundles
@@ -4293,50 +4371,30 @@ async function generatePlan(
 
         date: dateISO(group.date),
 
-        period: normalizePeriod(
-          group.period_label,
-        ),
+        period: normalizePeriod(group.period_label),
 
-        professor_id:
-          group.professor_id ?? null,
+        professor_id: group.professor_id ?? null,
 
-        professor:
-          group.professor_name ??
-          group.professor ??
-          "",
+        professor: group.professor_name ?? group.professor ?? "",
 
-        professor_name:
-          group.professor_name ??
-          group.professor ??
-          "",
+        professor_name: group.professor_name ?? group.professor ?? "",
 
-        professorKey:
-          getProfessorKey(group),
+        professorKey: getProfessorKey(group),
 
-        professorNameKey:
-          getProfessorNameKey(group),
+        professorNameKey: getProfessorNameKey(group),
 
         groups: [],
       });
     }
 
-    bundlesMap
-      .get(key)
-      .groups.push(group);
+    bundlesMap.get(key).groups.push(group);
   }
 
-  const bundles =
-    Array.from(
-      bundlesMap.values(),
-    );
+  const bundles = Array.from(bundlesMap.values());
 
-  console.log(
-    `📦 Total CRNs / groups: ${groups.length}`,
-  );
+  console.log(`📦 Total CRNs / groups: ${groups.length}`);
 
-  console.log(
-    `📦 Total Professor + Date + Period bundles: ${bundles.length}`,
-  );
+  console.log(`📦 Total Professor + Date + Period bundles: ${bundles.length}`);
 
   // ==========================================================
   // Group By Professor
@@ -4351,51 +4409,35 @@ async function generatePlan(
       professorsMap.set(key, {
         key,
 
-        professor_id:
-          bundle.professor_id,
+        professor_id: bundle.professor_id,
 
-        professor:
-          bundle.professor,
+        professor: bundle.professor,
 
-        professorNameKey:
-          bundle.professorNameKey,
+        professorNameKey: bundle.professorNameKey,
 
         bundles: [],
       });
     }
 
-    professorsMap
-      .get(key)
-      .bundles.push(bundle);
+    professorsMap.get(key).bundles.push(bundle);
   }
 
-  const professorGroups =
-    Array.from(
-      professorsMap.values(),
-    );
+  const professorGroups = Array.from(professorsMap.values());
 
   // ==========================================================
   // Sort Bundles
   // ==========================================================
 
   for (const professor of professorGroups) {
-    professor.bundles.sort(
-      (a, b) => {
-        const dateCompare =
-          String(a.date).localeCompare(
-            String(b.date),
-          );
+    professor.bundles.sort((a, b) => {
+      const dateCompare = String(a.date).localeCompare(String(b.date));
 
-        if (dateCompare !== 0) {
-          return dateCompare;
-        }
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
 
-        return sortPeriods(
-          a.period,
-          b.period,
-        );
-      },
-    );
+      return sortPeriods(a.period, b.period);
+    });
   }
 
   // ==========================================================
@@ -4403,53 +4445,31 @@ async function generatePlan(
   // ==========================================================
 
   professorGroups.sort((a, b) => {
-    if (
-      b.bundles.length !==
-      a.bundles.length
-    ) {
-      return (
-        b.bundles.length -
-        a.bundles.length
-      );
+    if (b.bundles.length !== a.bundles.length) {
+      return b.bundles.length - a.bundles.length;
     }
 
-    return String(
-      a.professor,
-    ).localeCompare(
-      String(b.professor),
-      "ar",
-    );
+    return String(a.professor).localeCompare(String(b.professor), "ar");
   });
 
-  console.log(
-    `👨‍🏫 Unique professors: ${professorGroups.length}`,
-  );
+  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
 
   // ==========================================================
   // Professor Assignments
   // ==========================================================
 
-  const professorAssignments =
-    new Map();
+  const professorAssignments = new Map();
 
   // ==========================================================
   // Forced Assignments
   // ==========================================================
 
-  const forcedProfessorAssignments =
-    new Map();
+  const forcedProfessorAssignments = new Map();
 
-  function registerForcedProfessor(
-    group,
-    supervisorId,
-    source,
-  ) {
-    const professorKey =
-      getProfessorKey(group);
+  function registerForcedProfessor(group, supervisorId, source) {
+    const professorKey = getProfessorKey(group);
 
-    const id = Number(
-      supervisorId,
-    );
+    const id = Number(supervisorId);
 
     if (!Number.isFinite(id)) {
       return;
@@ -4457,74 +4477,49 @@ async function generatePlan(
 
     if (!cand[id]) {
       conflicts.push({
-        type:
-          "SUPERVISOR_NOT_SELECTED",
+        type: "SUPERVISOR_NOT_SELECTED",
 
-        professor:
-          group.professor_name ??
-          group.professor ??
-          "",
+        professor: group.professor_name ?? group.professor ?? "",
 
-        professor_id:
-          group.professor_id ?? null,
+        professor_id: group.professor_id ?? null,
 
         supervisor_id: id,
 
         source,
 
-        message:
-          "The required supervisor is not in the selected Duty Pool.",
+        message: "The required supervisor is not in the selected Duty Pool.",
       });
 
       return;
     }
 
-    if (
-      !forcedProfessorAssignments.has(
-        professorKey,
-      )
-    ) {
-      forcedProfessorAssignments.set(
-        professorKey,
-        {
-          supervisorId: id,
-          source,
-        },
-      );
+    if (!forcedProfessorAssignments.has(professorKey)) {
+      forcedProfessorAssignments.set(professorKey, {
+        supervisorId: id,
+        source,
+      });
 
       return;
     }
 
-    const existing =
-      forcedProfessorAssignments.get(
-        professorKey,
-      );
+    const existing = forcedProfessorAssignments.get(professorKey);
 
-    if (
-      Number(existing.supervisorId) === id
-    ) {
+    if (Number(existing.supervisorId) === id) {
       return;
     }
 
     conflicts.push({
-      type:
-        "PROFESSOR_MULTIPLE_SUPERVISORS",
+      type: "PROFESSOR_MULTIPLE_SUPERVISORS",
 
-      professor:
-        group.professor_name ??
-        group.professor ??
-        "",
+      professor: group.professor_name ?? group.professor ?? "",
 
-      professor_id:
-        group.professor_id ?? null,
+      professor_id: group.professor_id ?? null,
 
-      supervisor_1:
-        existing.supervisorId,
+      supervisor_1: existing.supervisorId,
 
       supervisor_2: id,
 
-      message:
-        `Professor is forced to two different supervisors by ${existing.source} and ${source}.`,
+      message: `Professor is forced to two different supervisors by ${existing.source} and ${source}.`,
     });
   }
 
@@ -4533,44 +4528,21 @@ async function generatePlan(
   // ==========================================================
 
   for (const lock of locks) {
-    const sessionGroupId =
-      Number(
-        lock.session_group_id ??
-          lock.sessionGroupId,
-      );
+    const sessionGroupId = Number(lock.session_group_id ?? lock.sessionGroupId);
 
-    const supervisorId =
-      Number(
-        lock.supervisor_id ??
-          lock.supervisorId,
-      );
+    const supervisorId = Number(lock.supervisor_id ?? lock.supervisorId);
 
-    if (
-      !Number.isFinite(
-        sessionGroupId,
-      ) ||
-      !Number.isFinite(
-        supervisorId,
-      )
-    ) {
+    if (!Number.isFinite(sessionGroupId) || !Number.isFinite(supervisorId)) {
       continue;
     }
 
-    const group = groups.find(
-      (g) =>
-        Number(g.id) ===
-        sessionGroupId,
-    );
+    const group = groups.find((g) => Number(g.id) === sessionGroupId);
 
     if (!group) {
       continue;
     }
 
-    registerForcedProfessor(
-      group,
-      supervisorId,
-      "lock",
-    );
+    registerForcedProfessor(group, supervisorId, "lock");
   }
 
   // ==========================================================
@@ -4578,44 +4550,21 @@ async function generatePlan(
   // ==========================================================
 
   for (const item of pre) {
-    const sessionGroupId =
-      Number(
-        item.session_group_id ??
-          item.sessionGroupId,
-      );
+    const sessionGroupId = Number(item.session_group_id ?? item.sessionGroupId);
 
-    const supervisorId =
-      Number(
-        item.supervisor_id ??
-          item.supervisorId,
-      );
+    const supervisorId = Number(item.supervisor_id ?? item.supervisorId);
 
-    if (
-      !Number.isFinite(
-        sessionGroupId,
-      ) ||
-      !Number.isFinite(
-        supervisorId,
-      )
-    ) {
+    if (!Number.isFinite(sessionGroupId) || !Number.isFinite(supervisorId)) {
       continue;
     }
 
-    const group = groups.find(
-      (g) =>
-        Number(g.id) ===
-        sessionGroupId,
-    );
+    const group = groups.find((g) => Number(g.id) === sessionGroupId);
 
     if (!group) {
       continue;
     }
 
-    registerForcedProfessor(
-      group,
-      supervisorId,
-      "preassignment",
-    );
+    registerForcedProfessor(group, supervisorId, "preassignment");
   }
 
   // ==========================================================
@@ -4623,45 +4572,25 @@ async function generatePlan(
   // ==========================================================
 
   for (const professor of professorGroups) {
-    let affinitySupervisor =
-      null;
+    let affinitySupervisor = null;
 
     if (
-      professor.professor_id !==
-        null &&
-      professor.professor_id !==
-        undefined
+      professor.professor_id !== null &&
+      professor.professor_id !== undefined
     ) {
-      affinitySupervisor =
-        professorAffinity.get(
-          Number(
-            professor.professor_id,
-          ),
-        );
+      affinitySupervisor = professorAffinity.get(
+        Number(professor.professor_id),
+      );
     }
 
-    if (
-      affinitySupervisor ===
-        null ||
-      affinitySupervisor ===
-        undefined
-    ) {
-      affinitySupervisor =
-        professorNameAffinity.get(
-          professor.professorNameKey,
-        );
+    if (affinitySupervisor === null || affinitySupervisor === undefined) {
+      affinitySupervisor = professorNameAffinity.get(
+        professor.professorNameKey,
+      );
     }
 
-    if (
-      affinitySupervisor !==
-        null &&
-      affinitySupervisor !==
-        undefined
-    ) {
-      const supervisorId =
-        Number(
-          affinitySupervisor,
-        );
+    if (affinitySupervisor !== null && affinitySupervisor !== undefined) {
+      const supervisorId = Number(affinitySupervisor);
 
       console.log(
         `🎯 AFFINITY FOUND: Professor "${professor.professor}" -> Supervisor ${supervisorId}`,
@@ -4669,17 +4598,13 @@ async function generatePlan(
 
       if (!cand[supervisorId]) {
         conflicts.push({
-          type:
-            "AFFINITY_SUPERVISOR_NOT_SELECTED",
+          type: "AFFINITY_SUPERVISOR_NOT_SELECTED",
 
-          professor:
-            professor.professor,
+          professor: professor.professor,
 
-          professor_id:
-            professor.professor_id,
+          professor_id: professor.professor_id,
 
-          supervisor_id:
-            supervisorId,
+          supervisor_id: supervisorId,
 
           message:
             "The affinity supervisor is not part of the selected Duty Pool.",
@@ -4688,48 +4613,32 @@ async function generatePlan(
         continue;
       }
 
-      const forced =
-        forcedProfessorAssignments.get(
-          professor.key,
-        );
+      const forced = forcedProfessorAssignments.get(professor.key);
 
-      if (
-        forced &&
-        Number(
-          forced.supervisorId,
-        ) !== supervisorId
-      ) {
+      if (forced && Number(forced.supervisorId) !== supervisorId) {
         console.warn(
           `⚠️ Professor affinity conflicts with forced assignment: ${professor.professor}`,
         );
 
         conflicts.push({
-          type:
-            "AFFINITY_FORCED_CONFLICT",
+          type: "AFFINITY_FORCED_CONFLICT",
 
-          professor:
-            professor.professor,
+          professor: professor.professor,
 
-          professor_id:
-            professor.professor_id,
+          professor_id: professor.professor_id,
 
-          affinity_supervisor:
-            supervisorId,
+          affinity_supervisor: supervisorId,
 
-          forced_supervisor:
-            forced.supervisorId,
+          forced_supervisor: forced.supervisorId,
         });
 
         continue;
       }
 
-      forcedProfessorAssignments.set(
-        professor.key,
-        {
-          supervisorId,
-          source: "affinity",
-        },
-      );
+      forcedProfessorAssignments.set(professor.key, {
+        supervisorId,
+        source: "affinity",
+      });
 
       console.log(
         `🔒 Professor "${professor.professor}" FORCED to Supervisor ${supervisorId}`,
@@ -4737,8 +4646,7 @@ async function generatePlan(
     }
   }
 
-
-    // ==========================================================
+  // ==========================================================
   // Single-Professor-Day Split (Equal Distribution)
   // ==========================================================
 
@@ -4756,74 +4664,54 @@ async function generatePlan(
     variant,
   });
 
-  console.log(
-    "📆 Single-Professor-Day Split result:",
-    singleDaySplitResult,
-  );
+  console.log("📆 Single-Professor-Day Split result:", singleDaySplitResult);
 
   // ==========================================================
   // Forced Professors FIRST
   // ==========================================================
 
   for (const professor of professorGroups) {
-    const forced =
-      forcedProfessorAssignments.get(
-        professor.key,
-      );
+    const forced = forcedProfessorAssignments.get(professor.key);
 
     if (!forced) {
       continue;
     }
 
-    const supervisor =
-      cand[
-        Number(
-          forced.supervisorId,
-        )
-      ];
+    const supervisor = cand[Number(forced.supervisorId)];
 
     if (!supervisor) {
       conflicts.push({
-        type:
-          "SUPERVISOR_NOT_FOUND",
+        type: "SUPERVISOR_NOT_FOUND",
 
-        professor:
-          professor.professor,
+        professor: professor.professor,
 
-        supervisor_id:
-          forced.supervisorId,
+        supervisor_id: forced.supervisorId,
       });
 
       continue;
     }
 
-    const ok =
-      assignProfessorToSupervisor(
-        professor.key,
-        professor.bundles,
-        forced.supervisorId,
-        result,
-        cand,
-        bundleAssignments,
-        professorAssignments,
-      );
+    const ok = assignProfessorToSupervisor(
+      professor.key,
+      professor.bundles,
+      forced.supervisorId,
+      result,
+      cand,
+      bundleAssignments,
+      professorAssignments,
+    );
 
     if (!ok) {
       conflicts.push({
-        type:
-          "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
+        type: "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
 
-        professor:
-          professor.professor,
+        professor: professor.professor,
 
-        professor_id:
-          professor.professor_id,
+        professor_id: professor.professor_id,
 
-        supervisor_id:
-          forced.supervisorId,
+        supervisor_id: forced.supervisorId,
 
-        periods:
-          professor.bundles.length,
+        periods: professor.bundles.length,
 
         message:
           "The professor cannot fit completely into the forced supervisor because of period conflicts.",
@@ -4835,134 +4723,86 @@ async function generatePlan(
   // Shuffle Helper
   // ==========================================================
 
-  const shuffle = (arr) =>
-    seededShuffle(
-      [...arr],
-      Number(variant) || 1,
-    );
+  const shuffle = (arr) => seededShuffle([...arr], Number(variant) || 1);
 
   // ==========================================================
   // Remaining Professors
   // ==========================================================
 
   console.log("========================================");
-  console.log(
-    "⚖️ STARTING NORMAL FAIR DISTRIBUTION",
-  );
+  console.log("⚖️ STARTING NORMAL FAIR DISTRIBUTION");
   console.log("========================================");
 
   for (const professor of professorGroups) {
-    if (
-      professorAssignments.has(
-        professor.key,
-      )
-    ) {
+    if (professorAssignments.has(professor.key)) {
       continue;
     }
 
-    const allMinimumsReached =
-      hasReachedAllMinimums(
-        cand,
-        selectedSupervisorIds,
-        minimumEnabled,
-        minimumTarget,
-      );
+    const allMinimumsReached = hasReachedAllMinimums(
+      cand,
+      selectedSupervisorIds,
+      minimumEnabled,
+      minimumTarget,
+    );
 
     const ranked = [];
 
     for (const supervisorId of selectedSupervisorIds) {
-      const supervisor =
-        cand[supervisorId];
+      const supervisor = cand[supervisorId];
 
       if (!supervisor) {
         continue;
       }
 
-      if (
-        !canSupervisorTakeProfessor(
-          supervisor,
-          professor.bundles,
-        )
-      ) {
+      if (!canSupervisorTakeProfessor(supervisor, professor.bundles)) {
         continue;
       }
 
-      const workload =
-        professor.bundles.length;
+      const workload = professor.bundles.length;
 
-      const currentTotal =
-        Number(
-          supervisor.total || 0,
-        );
+      const currentTotal = Number(supervisor.total || 0);
 
-      const projectedTotal =
-        currentTotal + workload;
+      const projectedTotal = currentTotal + workload;
 
-      const minimumInfo =
-        getMinimumInfo(
-          supervisor,
-          workload,
-          minimumEnabled,
-          minimumTarget,
-        );
+      const minimumInfo = getMinimumInfo(
+        supervisor,
+        workload,
+        minimumEnabled,
+        minimumTarget,
+      );
 
-      const consecutiveScore =
-        getProfessorConsecutiveScore(
-          supervisor,
-          professor.bundles,
-        );
+      const consecutiveScore = getProfessorConsecutiveScore(
+        supervisor,
+        professor.bundles,
+      );
 
-      const periodContinuityScore =
-        getPeriodContinuityScore(
-          supervisor,
-          professor.bundles,
-        );
+      const periodContinuityScore = getPeriodContinuityScore(
+        supervisor,
+        professor.bundles,
+      );
 
-      const continuityPriority =
-        getContinuityPriority(
-          supervisor,
-          professor.bundles,
-        );
+      const continuityPriority = getContinuityPriority(
+        supervisor,
+        professor.bundles,
+      );
 
-      const dailyLoad =
-        getProfessorDailyLoad(
-          supervisor,
-          professor.bundles,
-        );
+      const dailyLoad = getProfessorDailyLoad(supervisor, professor.bundles);
 
-      const professorCount =
-        supervisor
-          .assignedProfessors
-          ?.size || 0;
+      const professorCount = supervisor.assignedProfessors?.size || 0;
 
-      const noProfessorYet =
-        professorCount === 0;
+      const noProfessorYet = professorCount === 0;
 
       let score =
-        periodContinuityScore *
-          1000000 +
-        continuityPriority *
-          1000 +
-        (noProfessorYet
-          ? 100000000
-          : 0) -
-        projectedTotal *
-          10000 -
+        periodContinuityScore * 1000000 +
+        continuityPriority * 1000 +
+        (noProfessorYet ? 100000000 : 0) -
+        projectedTotal * 10000 -
         dailyLoad * 2;
 
-      if (
-        minimumEnabled &&
-        minimumInfo.needsMinimum &&
-        !allMinimumsReached
-      ) {
-        score +=
-          1000000000 +
-          minimumInfo.deficit *
-            1000000;
+      if (minimumEnabled && minimumInfo.needsMinimum && !allMinimumsReached) {
+        score += 1000000000 + minimumInfo.deficit * 1000000;
 
-        if (
-          minimumInfo.reachesMinimum
-        ) {
+        if (minimumInfo.reachesMinimum) {
           score += 50000000;
         }
       }
@@ -4990,17 +4830,13 @@ async function generatePlan(
 
         minimumTarget,
 
-        needsMinimum:
-          minimumInfo.needsMinimum,
+        needsMinimum: minimumInfo.needsMinimum,
 
-        minimumDeficit:
-          minimumInfo.deficit,
+        minimumDeficit: minimumInfo.deficit,
 
-        projectedMinimumDeficit:
-          minimumInfo.projectedDeficit,
+        projectedMinimumDeficit: minimumInfo.projectedDeficit,
 
-        reachesMinimum:
-          minimumInfo.reachesMinimum,
+        reachesMinimum: minimumInfo.reachesMinimum,
 
         score,
       });
@@ -5008,17 +4844,13 @@ async function generatePlan(
 
     if (!ranked.length) {
       conflicts.push({
-        type:
-          "NO_SUPERVISOR_FOR_PROFESSOR",
+        type: "NO_SUPERVISOR_FOR_PROFESSOR",
 
-        professor:
-          professor.professor,
+        professor: professor.professor,
 
-        professor_id:
-          professor.professor_id,
+        professor_id: professor.professor_id,
 
-        periods:
-          professor.bundles.length,
+        periods: professor.bundles.length,
 
         message:
           "No single supervisor can take all periods of this professor without a same-period conflict.",
@@ -5038,214 +4870,112 @@ async function generatePlan(
 
     ranked.sort((a, b) => {
       if (minimumEnabled) {
-        const aNeedsMinimum =
-          a.currentTotal <
-          minimumTarget;
+        const aNeedsMinimum = a.currentTotal < minimumTarget;
 
-        const bNeedsMinimum =
-          b.currentTotal <
-          minimumTarget;
+        const bNeedsMinimum = b.currentTotal < minimumTarget;
 
-        if (
-          aNeedsMinimum !==
-          bNeedsMinimum
-        ) {
-          return aNeedsMinimum
-            ? -1
-            : 1;
+        if (aNeedsMinimum !== bNeedsMinimum) {
+          return aNeedsMinimum ? -1 : 1;
         }
 
-        if (
-          aNeedsMinimum &&
-          bNeedsMinimum
-        ) {
-          if (
-            a.minimumDeficit !==
-            b.minimumDeficit
-          ) {
-            return (
-              b.minimumDeficit -
-              a.minimumDeficit
-            );
+        if (aNeedsMinimum && bNeedsMinimum) {
+          if (a.minimumDeficit !== b.minimumDeficit) {
+            return b.minimumDeficit - a.minimumDeficit;
           }
 
-          if (
-            a.projectedMinimumDeficit !==
-            b.projectedMinimumDeficit
-          ) {
-            return (
-              a.projectedMinimumDeficit -
-              b.projectedMinimumDeficit
-            );
+          if (a.projectedMinimumDeficit !== b.projectedMinimumDeficit) {
+            return a.projectedMinimumDeficit - b.projectedMinimumDeficit;
           }
 
-          if (
-            a.reachesMinimum !==
-            b.reachesMinimum
-          ) {
-            return a.reachesMinimum
-              ? -1
-              : 1;
+          if (a.reachesMinimum !== b.reachesMinimum) {
+            return a.reachesMinimum ? -1 : 1;
           }
         }
       }
 
-      if (
-        a.projectedTotal !==
-        b.projectedTotal
-      ) {
-        return (
-          a.projectedTotal -
-          b.projectedTotal
-        );
+      if (a.projectedTotal !== b.projectedTotal) {
+        return a.projectedTotal - b.projectedTotal;
       }
 
-      if (
-        a.periodContinuityScore !==
-        b.periodContinuityScore
-      ) {
-        return (
-          b.periodContinuityScore -
-          a.periodContinuityScore
-        );
+      if (a.periodContinuityScore !== b.periodContinuityScore) {
+        return b.periodContinuityScore - a.periodContinuityScore;
       }
 
-      if (
-        a.continuityPriority !==
-        b.continuityPriority
-      ) {
-        return (
-          b.continuityPriority -
-          a.continuityPriority
-        );
+      if (a.continuityPriority !== b.continuityPriority) {
+        return b.continuityPriority - a.continuityPriority;
       }
 
-      if (
-        a.consecutiveScore !==
-        b.consecutiveScore
-      ) {
-        return (
-          b.consecutiveScore -
-          a.consecutiveScore
-        );
+      if (a.consecutiveScore !== b.consecutiveScore) {
+        return b.consecutiveScore - a.consecutiveScore;
       }
 
-      if (
-        a.dailyLoad !==
-        b.dailyLoad
-      ) {
-        return (
-          a.dailyLoad -
-          b.dailyLoad
-        );
+      if (a.dailyLoad !== b.dailyLoad) {
+        return a.dailyLoad - b.dailyLoad;
       }
 
-      if (
-        a.professorCount !==
-        b.professorCount
-      ) {
-        return (
-          a.professorCount -
-          b.professorCount
-        );
+      if (a.professorCount !== b.professorCount) {
+        return a.professorCount - b.professorCount;
       }
 
       return (
-        seededShuffle(
-          `${variant}-${a.supervisorId}`,
-        ) -
-        seededShuffle(
-          `${variant}-${b.supervisorId}`,
-        )
+        seededShuffle(`${variant}-${a.supervisorId}`) -
+        seededShuffle(`${variant}-${b.supervisorId}`)
       );
     });
 
-    if (
-      ranked[0]
-        .periodContinuityScore !==
-        0 ||
-      ranked[0].needsMinimum
-    ) {
-      console.log(
-        "🏆 SELECTED SUPERVISOR:",
-        {
-          professor:
-            professor.professor,
+    if (ranked[0].periodContinuityScore !== 0 || ranked[0].needsMinimum) {
+      console.log("🏆 SELECTED SUPERVISOR:", {
+        professor: professor.professor,
 
-          supervisor:
-            ranked[0].supervisorId,
+        supervisor: ranked[0].supervisorId,
 
-          currentTotal:
-            ranked[0].currentTotal,
+        currentTotal: ranked[0].currentTotal,
 
-          projectedTotal:
-            ranked[0].projectedTotal,
+        projectedTotal: ranked[0].projectedTotal,
 
-          minimumEnabled:
-            ranked[0].minimumEnabled,
+        minimumEnabled: ranked[0].minimumEnabled,
 
-          minimumTarget:
-            ranked[0].minimumTarget,
+        minimumTarget: ranked[0].minimumTarget,
 
-          needsMinimum:
-            ranked[0].needsMinimum,
+        needsMinimum: ranked[0].needsMinimum,
 
-          minimumDeficit:
-            ranked[0].minimumDeficit,
+        minimumDeficit: ranked[0].minimumDeficit,
 
-          projectedMinimumDeficit:
-            ranked[0]
-              .projectedMinimumDeficit,
+        projectedMinimumDeficit: ranked[0].projectedMinimumDeficit,
 
-          reachesMinimum:
-            ranked[0]
-              .reachesMinimum,
+        reachesMinimum: ranked[0].reachesMinimum,
 
-          periodContinuityScore:
-            ranked[0]
-              .periodContinuityScore,
+        periodContinuityScore: ranked[0].periodContinuityScore,
 
-          continuityPriority:
-            ranked[0]
-              .continuityPriority,
+        continuityPriority: ranked[0].continuityPriority,
 
-          consecutiveScore:
-            ranked[0]
-              .consecutiveScore,
+        consecutiveScore: ranked[0].consecutiveScore,
 
-          dailyLoad:
-            ranked[0].dailyLoad,
-        },
-      );
+        dailyLoad: ranked[0].dailyLoad,
+      });
     }
 
-    const selected =
-      ranked[0];
+    const selected = ranked[0];
 
-    const ok =
-      assignProfessorToSupervisor(
-        professor.key,
-        professor.bundles,
-        selected.supervisorId,
-        result,
-        cand,
-        bundleAssignments,
-        professorAssignments,
-      );
+    const ok = assignProfessorToSupervisor(
+      professor.key,
+      professor.bundles,
+      selected.supervisorId,
+      result,
+      cand,
+      bundleAssignments,
+      professorAssignments,
+    );
 
     if (!ok) {
       conflicts.push({
-        type:
-          "PROFESSOR_ASSIGNMENT_FAILED",
+        type: "PROFESSOR_ASSIGNMENT_FAILED",
 
-        professor:
-          professor.professor,
+        professor: professor.professor,
 
-        professor_id:
-          professor.professor_id,
+        professor_id: professor.professor_id,
 
-        supervisor_id:
-          selected.supervisorId,
+        supervisor_id: selected.supervisorId,
       });
 
       console.warn(
@@ -5253,82 +4983,80 @@ async function generatePlan(
       );
     }
   }
+  const relaxedFallbackResult = assignRemainingProfessorsRelaxed({
+    professorGroups,
+    selectedSupervisorIds,
+    cand,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    conflicts,
+    variant,
+  });
 
+  console.log("🆘 Relaxed Fallback result:", relaxedFallbackResult);
   // ==========================================================
   // Rebalance Engine
   // ==========================================================
 
-  const rebalanceResult =
-    rebalanceAssignments({
-      cand,
-      selectedSupervisorIds,
-      professorGroups,
-      bundles,
-      result,
-      bundleAssignments,
-      professorAssignments,
-      forcedProfessorAssignments,
-      minimumEnabled,
-      minimumTarget,
-      variant,
-    });
+  const rebalanceResult = rebalanceAssignments({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+    variant,
+  });
 
-  console.log(
-    "🔄 Rebalance result:",
-    rebalanceResult,
-  );
+  console.log("🔄 Rebalance result:", rebalanceResult);
 
   // ==========================================================
   // Minimum Rebalance Engine
   // ==========================================================
 
-  console.log(
-    "🔥🔥🔥 MINIMUM REBALANCE TEST MARKER 🔥🔥🔥",
-  );
+  console.log("🔥🔥🔥 MINIMUM REBALANCE TEST MARKER 🔥🔥🔥");
 
-  const minimumRebalanceResult =
-    minimumRebalanceAssignments({
-      cand,
-      selectedSupervisorIds,
-      professorGroups,
-      bundles,
-      result,
-      bundleAssignments,
-      professorAssignments,
-      forcedProfessorAssignments,
-      minimumEnabled,
-      minimumTarget,
-      variant,
-    });
+  const minimumRebalanceResult = minimumRebalanceAssignments({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+    variant,
+  });
 
-  console.log(
-    "🎯 Minimum Rebalance result:",
-    minimumRebalanceResult,
-  );
+  console.log("🎯 Minimum Rebalance result:", minimumRebalanceResult);
 
   // ==========================================================
   // Swap Rebalance Engine
   // ==========================================================
 
-  const swapRebalanceResult =
-    swapProfessorsBetweenSupervisors({
-      cand,
-      selectedSupervisorIds,
-      professorGroups,
-      bundles,
-      result,
-      bundleAssignments,
-      professorAssignments,
-      forcedProfessorAssignments,
-      minimumEnabled,
-      minimumTarget,
-      variant,
-    });
+  const swapRebalanceResult = swapProfessorsBetweenSupervisors({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+    variant,
+  });
 
-  console.log(
-    "🔄 Swap Rebalance result:",
-    swapRebalanceResult,
-  );
+  console.log("🔄 Swap Rebalance result:", swapRebalanceResult);
 
   // ==========================================================
   // Minimum Split Fallback Engine (last resort)
@@ -5352,10 +5080,7 @@ async function generatePlan(
     minimumTarget,
   });
 
-  console.log(
-    "🧩 Minimum Split Fallback result:",
-    minimumSplitResult,
-  );
+  console.log("🧩 Minimum Split Fallback result:", minimumSplitResult);
 
   // ==========================================================
   // FINAL CONSISTENCY REBUILD
@@ -5378,30 +5103,15 @@ async function generatePlan(
   console.log("🔍 FINAL RESULT BEFORE SAVE");
   console.log("========================================");
 
-  console.log(
-    "📦 result is array:",
-    Array.isArray(result),
-  );
+  console.log("📦 result is array:", Array.isArray(result));
 
-  console.log(
-    "📦 result length:",
-    result.length,
-  );
+  console.log("📦 result length:", result.length);
 
-  console.log(
-    "📦 bundleAssignments:",
-    bundleAssignments.size,
-  );
+  console.log("📦 bundleAssignments:", bundleAssignments.size);
 
-  console.log(
-    "📦 professorAssignments:",
-    professorAssignments.size,
-  );
+  console.log("📦 professorAssignments:", professorAssignments.size);
 
-  console.log(
-    "📦 first result:",
-    result[0] || null,
-  );
+  console.log("📦 first result:", result[0] || null);
 
   console.log("========================================");
 
@@ -5409,113 +5119,64 @@ async function generatePlan(
   // Save
   // ==========================================================
 
-  await saveAssignments(
-    planId,
-    result,
-  );
+  await saveAssignments(planId, result);
 
-  console.log(
-    `💾 Assignments saved for plan ${planId}`,
-  );
+  console.log(`💾 Assignments saved for plan ${planId}`);
 
   // ==========================================================
   // Statistics
   // ==========================================================
 
-  const assignedGroupIds =
-    new Set(
-      result
-        .map((r) =>
-          Number(
-            r.session_group_id ??
-              r.sessionGroupId ??
-              r.id,
-          ),
-        )
-        .filter(Number.isInteger),
-    );
+  const assignedGroupIds = new Set(
+    result
+      .map((r) => Number(r.session_group_id ?? r.sessionGroupId ?? r.id))
+      .filter(Number.isInteger),
+  );
 
-  const assignedGroups =
-    assignedGroupIds.size;
+  const assignedGroups = assignedGroupIds.size;
 
-  const totalGroups =
-    groups.length;
+  const totalGroups = groups.length;
 
-  const supervisorsUsed =
-    Object.values(cand).filter(
-      (c) =>
-        Number(c.total || 0) > 0,
-    );
+  const supervisorsUsed = Object.values(cand).filter(
+    (c) => Number(c.total || 0) > 0,
+  );
 
   // ==========================================================
   // Fairness
   // ==========================================================
 
-  const totals =
-    Object.values(cand).map(
-      (c) =>
-        Number(c.total || 0),
-    );
+  const totals = Object.values(cand).map((c) => Number(c.total || 0));
 
-  const minTotal = totals.length
-    ? Math.min(...totals)
-    : 0;
+  const minTotal = totals.length ? Math.min(...totals) : 0;
 
-  const maxTotal = totals.length
-    ? Math.max(...totals)
-    : 0;
+  const maxTotal = totals.length ? Math.max(...totals) : 0;
 
-  const fairnessDifference =
-    maxTotal - minTotal;
+  const fairnessDifference = maxTotal - minTotal;
 
-  const totalBundles =
-    bundles.length;
+  const totalBundles = bundles.length;
 
-  const assignedBundles =
-    bundleAssignments.size;
+  const assignedBundles = bundleAssignments.size;
 
   // ==========================================================
   // Professor Uniqueness
   // ==========================================================
 
-  const professorSupervisorCheck =
-    new Map();
+  const professorSupervisorCheck = new Map();
 
   for (const row of result) {
-    const professorKey =
-      getProfessorKey({
-        professor_id:
-          row.professor_id,
+    const professorKey = getProfessorKey({
+      professor_id: row.professor_id,
 
-        professor_name:
-          row.professor,
-      });
+      professor_name: row.professor,
+    });
 
-    if (
-      !professorSupervisorCheck.has(
-        professorKey,
-      )
-    ) {
-      professorSupervisorCheck.set(
-        professorKey,
-        Number(
-          row.supervisor_id,
-        ),
-      );
+    if (!professorSupervisorCheck.has(professorKey)) {
+      professorSupervisorCheck.set(professorKey, Number(row.supervisor_id));
     } else {
-      const existing =
-        professorSupervisorCheck.get(
-          professorKey,
-        );
+      const existing = professorSupervisorCheck.get(professorKey);
 
-      if (
-        Number(existing) !==
-        Number(row.supervisor_id)
-      ) {
-        professorSupervisorCheck.set(
-          professorKey,
-          "MULTIPLE",
-        );
+      if (Number(existing) !== Number(row.supervisor_id)) {
+        professorSupervisorCheck.set(professorKey, "MULTIPLE");
       }
     }
   }
@@ -5524,26 +5185,13 @@ async function generatePlan(
 
   let intentionalMinimumSplits = 0;
 
-  for (const [
-    professorKey,
-    supervisorId,
-  ] of professorSupervisorCheck) {
-    const assigned =
-      professorAssignments.get(
-        professorKey,
-      );
+  for (const [professorKey, supervisorId] of professorSupervisorCheck) {
+    const assigned = professorAssignments.get(professorKey);
 
-    if (
-      supervisorId ===
-      "MULTIPLE"
-    ) {
+    if (supervisorId === "MULTIPLE") {
       if (
-        minimumSplitResult.splitProfessorKeys.has(
-          professorKey,
-        ) ||
-        singleDaySplitProfessorKeys.has(
-          professorKey,
-        )
+        minimumSplitResult.splitProfessorKeys.has(professorKey) ||
+        singleDaySplitProfessorKeys.has(professorKey)
       ) {
         intentionalMinimumSplits++;
         continue;
@@ -5553,11 +5201,7 @@ async function generatePlan(
       continue;
     }
 
-    if (
-      assigned !== undefined &&
-      Number(assigned) !==
-        Number(supervisorId)
-    ) {
+    if (assigned !== undefined && Number(assigned) !== Number(supervisorId)) {
       professorUniquenessViolations++;
     }
   }
@@ -5566,60 +5210,32 @@ async function generatePlan(
   // Minimum Statistics
   // ==========================================================
 
-  const minimumStatistics =
-    Object.values(cand).map(
-      (c) => {
-        const supervisor =
-          supervisors.find(
-            (s) =>
-              Number(s.id) ===
-              Number(c.id),
-          );
+  const minimumStatistics = Object.values(cand).map((c) => {
+    const supervisor = supervisors.find((s) => Number(s.id) === Number(c.id));
 
-        const reached =
-          minimumEnabled
-            ? Number(c.total) >=
-              minimumTarget
-            : null;
+    const reached = minimumEnabled ? Number(c.total) >= minimumTarget : null;
 
-        return {
-          "Supervisor ID":
-            c.id,
+    return {
+      "Supervisor ID": c.id,
 
-          Supervisor:
-            supervisor?.name ??
-            c.id,
+      Supervisor: supervisor?.name ?? c.id,
 
-          "Actual Periods":
-            c.total,
+      "Actual Periods": c.total,
 
-          "Minimum Periods":
-            minimumEnabled
-              ? minimumTarget
-              : "",
+      "Minimum Periods": minimumEnabled ? minimumTarget : "",
 
-          "Minimum Reached":
-            minimumEnabled
-              ? reached
-                ? "Yes"
-                : "No"
-              : "",
+      "Minimum Reached": minimumEnabled ? (reached ? "Yes" : "No") : "",
 
-          "Used Days":
-            Object.keys(
-              c.byDay,
-            ).length,
-        };
-      },
-    );
+      "Used Days": Object.keys(c.byDay).length,
+    };
+  });
 
-  const minimumsReached =
-    hasReachedAllMinimums(
-      cand,
-      selectedSupervisorIds,
-      minimumEnabled,
-      minimumTarget,
-    );
+  const minimumsReached = hasReachedAllMinimums(
+    cand,
+    selectedSupervisorIds,
+    minimumEnabled,
+    minimumTarget,
+  );
 
   // ==========================================================
   // Logs
@@ -5629,25 +5245,15 @@ async function generatePlan(
     `✅ Plan generated: ${assignedGroups}/${totalGroups} groups assigned`,
   );
 
-  console.log(
-    `📦 Bundles assigned: ${assignedBundles}/${totalBundles}`,
-  );
+  console.log(`📦 Bundles assigned: ${assignedBundles}/${totalBundles}`);
 
-  console.log(
-    `👨‍🏫 Unique professors: ${professorGroups.length}`,
-  );
+  console.log(`👨‍🏫 Unique professors: ${professorGroups.length}`);
 
-  console.log(
-    `👥 Supervisors used: ${supervisorsUsed.length}`,
-  );
+  console.log(`👥 Supervisors used: ${supervisorsUsed.length}`);
 
-  console.log(
-    `⚠️ Conflicts: ${conflicts.length}`,
-  );
+  console.log(`⚠️ Conflicts: ${conflicts.length}`);
 
-  console.log(
-    `⚖️ Fairness difference AFTER REBALANCE: ${fairnessDifference}`,
-  );
+  console.log(`⚖️ Fairness difference AFTER REBALANCE: ${fairnessDifference}`);
 
   console.log(
     `🔒 Professor uniqueness violations: ${professorUniquenessViolations}`,
@@ -5655,253 +5261,147 @@ async function generatePlan(
 
   console.log(
     `🔄 Rebalance moves: ${
-      rebalanceResult?.moves ??
-      rebalanceResult?.totalMoves ??
-      0
+      rebalanceResult?.moves ?? rebalanceResult?.totalMoves ?? 0
     }`,
   );
 
   if (minimumEnabled) {
-    console.log(
-      `🎯 Minimum periods target: ${minimumTarget}`,
-    );
+    console.log(`🎯 Minimum periods target: ${minimumTarget}`);
 
-    console.log(
-      `🎯 All minimums reached: ${minimumsReached}`,
-    );
+    console.log(`🎯 All minimums reached: ${minimumsReached}`);
 
-    console.log(
-      "🎯 Minimum statistics:",
-      minimumStatistics,
-    );
+    console.log("🎯 Minimum statistics:", minimumStatistics);
   }
 
   // ==========================================================
   // Export Excel
   // ==========================================================
 
-  const exportDir =
-    path.join(
-      __dirname,
-      "../exports",
-    );
+  const exportDir = path.join(__dirname, "../exports");
 
-  if (
-    !fs.existsSync(exportDir)
-  ) {
-    fs.mkdirSync(
-      exportDir,
-      {
-        recursive: true,
-      },
-    );
+  if (!fs.existsSync(exportDir)) {
+    fs.mkdirSync(exportDir, {
+      recursive: true,
+    });
   }
 
   // ==========================================================
   // Distribution Sheet
   // ==========================================================
 
-  const distributionRows =
-    result.map((row) => {
-      const supervisor =
-        supervisors.find(
-          (s) =>
-            Number(s.id) ===
-            Number(
-              row.supervisor_id,
-            ),
-        );
+  const distributionRows = result.map((row) => {
+    const supervisor = supervisors.find(
+      (s) => Number(s.id) === Number(row.supervisor_id),
+    );
 
-      return {
-        "Session Group ID":
-          row.session_group_id,
+    return {
+      "Session Group ID": row.session_group_id,
 
-        CRN: row.crn,
+      CRN: row.crn,
 
-        Professor:
-          row.professor,
+      Professor: row.professor,
 
-        Date: row.date,
+      Date: row.date,
 
-        Period: row.period,
+      Period: row.period,
 
-        Supervisor:
-          supervisor?.name ??
-          row.supervisor_id,
-      };
-    });
+      Supervisor: supervisor?.name ?? row.supervisor_id,
+    };
+  });
 
   // ==========================================================
   // Conflicts Sheet
   // ==========================================================
 
-  const conflictsRows =
-    conflicts.map((item) => ({
-      Date:
-        item.date ?? "",
+  const conflictsRows = conflicts.map((item) => ({
+    Date: item.date ?? "",
 
-      Period:
-        item.period ?? "",
+    Period: item.period ?? "",
 
-      Professor:
-        item.professor ?? "",
+    Professor: item.professor ?? "",
 
-      "Professor ID":
-        item.professor_id ??
-        "",
+    "Professor ID": item.professor_id ?? "",
 
-      Type:
-        item.type ?? "",
+    Type: item.type ?? "",
 
-      "Supervisor ID":
-        item.supervisor_id ??
-        "",
+    "Supervisor ID": item.supervisor_id ?? "",
 
-      Message:
-        item.message ?? "",
-    }));
+    Message: item.message ?? "",
+  }));
 
   // ==========================================================
   // Statistics Sheet
   // ==========================================================
 
-  const statisticsRows =
-    Object.values(cand).map(
-      (c) => {
-        const supervisor =
-          supervisors.find(
-            (s) =>
-              Number(s.id) ===
-              Number(c.id),
-          );
+  const statisticsRows = Object.values(cand).map((c) => {
+    const supervisor = supervisors.find((s) => Number(s.id) === Number(c.id));
 
-        const minimumReached =
-          minimumEnabled
-            ? c.total >=
-              minimumTarget
-            : null;
+    const minimumReached = minimumEnabled ? c.total >= minimumTarget : null;
 
-        return {
-          "Supervisor ID":
-            c.id,
+    return {
+      "Supervisor ID": c.id,
 
-          Supervisor:
-            supervisor?.name ??
-            c.id,
+      Supervisor: supervisor?.name ?? c.id,
 
-          "Total Periods":
-            c.total,
+      "Total Periods": c.total,
 
-          "Minimum Periods":
-            minimumEnabled
-              ? minimumTarget
-              : "",
+      "Minimum Periods": minimumEnabled ? minimumTarget : "",
 
-          "Minimum Reached":
-            minimumEnabled
-              ? minimumReached
-                ? "Yes"
-                : "No"
-              : "",
+      "Minimum Reached": minimumEnabled ? (minimumReached ? "Yes" : "No") : "",
 
-          "Used Days":
-            Object.keys(
-              c.byDay,
-            ).length,
-        };
-      },
-    );
+      "Used Days": Object.keys(c.byDay).length,
+    };
+  });
 
   // ==========================================================
   // Professor Assignment Sheet
   // ==========================================================
 
-  const professorRows =
-    professorGroups.map(
-      (professor) => {
-        const supervisorId =
-          professorAssignments.get(
-            professor.key,
-          );
+  const professorRows = professorGroups.map((professor) => {
+    const supervisorId = professorAssignments.get(professor.key);
 
-        const supervisor =
-          supervisors.find(
-            (s) =>
-              Number(s.id) ===
-              Number(
-                supervisorId,
-              ),
-          );
-
-        return {
-          "Professor ID":
-            professor.professor_id,
-
-          Professor:
-            professor.professor,
-
-          "Total Periods":
-            professor.bundles.length,
-
-          Supervisor:
-            supervisor?.name ??
-            supervisorId ??
-            "",
-        };
-      },
+    const supervisor = supervisors.find(
+      (s) => Number(s.id) === Number(supervisorId),
     );
+
+    return {
+      "Professor ID": professor.professor_id,
+
+      Professor: professor.professor,
+
+      "Total Periods": professor.bundles.length,
+
+      Supervisor: supervisor?.name ?? supervisorId ?? "",
+    };
+  });
 
   // ==========================================================
   // Workbook
   // ==========================================================
 
-  const workbook =
-    xlsx.utils.book_new();
+  const workbook = xlsx.utils.book_new();
 
-  const distributionSheet =
-    xlsx.utils.json_to_sheet(
-      distributionRows,
-    );
+  const distributionSheet = xlsx.utils.json_to_sheet(distributionRows);
 
-  const conflictsSheet =
-    xlsx.utils.json_to_sheet(
-      conflictsRows.length
-        ? conflictsRows
-        : [
-            {
-              Status:
-                "No conflicts",
-            },
-          ],
-    );
-
-  const statisticsSheet =
-    xlsx.utils.json_to_sheet(
-      statisticsRows,
-    );
-
-  const professorsSheet =
-    xlsx.utils.json_to_sheet(
-      professorRows,
-    );
-
-  xlsx.utils.book_append_sheet(
-    workbook,
-    distributionSheet,
-    "Distribution",
+  const conflictsSheet = xlsx.utils.json_to_sheet(
+    conflictsRows.length
+      ? conflictsRows
+      : [
+          {
+            Status: "No conflicts",
+          },
+        ],
   );
 
-  xlsx.utils.book_append_sheet(
-    workbook,
-    conflictsSheet,
-    "Conflicts",
-  );
+  const statisticsSheet = xlsx.utils.json_to_sheet(statisticsRows);
 
-  xlsx.utils.book_append_sheet(
-    workbook,
-    statisticsSheet,
-    "Statistics",
-  );
+  const professorsSheet = xlsx.utils.json_to_sheet(professorRows);
+
+  xlsx.utils.book_append_sheet(workbook, distributionSheet, "Distribution");
+
+  xlsx.utils.book_append_sheet(workbook, conflictsSheet, "Conflicts");
+
+  xlsx.utils.book_append_sheet(workbook, statisticsSheet, "Statistics");
 
   xlsx.utils.book_append_sheet(
     workbook,
@@ -5914,67 +5414,37 @@ async function generatePlan(
   // ==========================================================
 
   if (minimumEnabled) {
-    const minimumSheet =
-      xlsx.utils.json_to_sheet(
-        minimumStatistics,
-      );
+    const minimumSheet = xlsx.utils.json_to_sheet(minimumStatistics);
 
-    xlsx.utils.book_append_sheet(
-      workbook,
-      minimumSheet,
-      "Minimum Periods",
-    );
+    xlsx.utils.book_append_sheet(workbook, minimumSheet, "Minimum Periods");
   }
 
   // ==========================================================
   // Minimum Split (Fallback) Sheet
   // ==========================================================
 
-  if (
-    minimumEnabled &&
-    minimumSplitResult?.details?.length
-  ) {
-    const splitRows =
-      minimumSplitResult.details.map(
-        (item) => {
-          const fromSupervisor =
-            supervisors.find(
-              (s) =>
-                Number(s.id) ===
-                Number(
-                  item.from_supervisor_id,
-                ),
-            );
-
-          const toSupervisor =
-            supervisors.find(
-              (s) =>
-                Number(s.id) ===
-                Number(
-                  item.to_supervisor_id,
-                ),
-            );
-
-          return {
-            Professor: item.professor,
-            "Professor ID":
-              item.professor_id ?? "",
-            Date: item.date,
-            Period: item.period,
-            "From Supervisor":
-              fromSupervisor?.name ??
-              item.from_supervisor_id,
-            "To Supervisor":
-              toSupervisor?.name ??
-              item.to_supervisor_id,
-            Note:
-              "تقسيم اضطراري (ملاذ أخير) لتغطية الحد الأدنى فقط",
-          };
-        },
+  if (minimumEnabled && minimumSplitResult?.details?.length) {
+    const splitRows = minimumSplitResult.details.map((item) => {
+      const fromSupervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.from_supervisor_id),
       );
 
-    const splitSheet =
-      xlsx.utils.json_to_sheet(splitRows);
+      const toSupervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.to_supervisor_id),
+      );
+
+      return {
+        Professor: item.professor,
+        "Professor ID": item.professor_id ?? "",
+        Date: item.date,
+        Period: item.period,
+        "From Supervisor": fromSupervisor?.name ?? item.from_supervisor_id,
+        "To Supervisor": toSupervisor?.name ?? item.to_supervisor_id,
+        Note: "تقسيم اضطراري (ملاذ أخير) لتغطية الحد الأدنى فقط",
+      };
+    });
+
+    const splitSheet = xlsx.utils.json_to_sheet(splitRows);
 
     xlsx.utils.book_append_sheet(
       workbook,
@@ -5987,20 +5457,11 @@ async function generatePlan(
   // Export Path
   // ==========================================================
 
-  const exportPath =
-    path.join(
-      exportDir,
-      `plan_${planId}.xlsx`,
-    );
+  const exportPath = path.join(exportDir, `plan_${planId}.xlsx`);
 
-  xlsx.writeFile(
-    workbook,
-    exportPath,
-  );
+  xlsx.writeFile(workbook, exportPath);
 
-  console.log(
-    `📄 Excel exported: ${exportPath}`,
-  );
+  console.log(`📄 Excel exported: ${exportPath}`);
 
   // ==========================================================
   // Return
@@ -6013,11 +5474,9 @@ async function generatePlan(
 
     variant,
 
-    assigned:
-      assignedGroups,
+    assigned: assignedGroups,
 
-    total:
-      totalGroups,
+    total: totalGroups,
 
     assignedGroups,
     totalGroups,
@@ -6027,57 +5486,39 @@ async function generatePlan(
 
     conflicts,
 
-    conflictsCount:
-      conflicts.length,
+    conflictsCount: conflicts.length,
 
-    supervisorsUsed:
-      supervisorsUsed.length,
+    supervisorsUsed: supervisorsUsed.length,
 
     fairnessDifference,
 
-    idealFairnessRange:
-      "0-1",
+    idealFairnessRange: "0-1",
 
     professorUniquenessViolations,
 
-    rebalanceMoves:
-      rebalanceResult?.moves ??
-      rebalanceResult?.totalMoves ??
-      0,
+    rebalanceMoves: rebalanceResult?.moves ?? rebalanceResult?.totalMoves ?? 0,
 
-    rebalanceIterations:
-      rebalanceResult?.iterations ??
-      0,
+    rebalanceIterations: rebalanceResult?.iterations ?? 0,
 
-    minimumRebalanceMoves:
-      minimumRebalanceResult
-        ?.moves ?? 0,
+    minimumRebalanceMoves: minimumRebalanceResult?.moves ?? 0,
 
-    minimumRebalanceIterations:
-      minimumRebalanceResult
-        ?.iterations ?? 0,
+    minimumRebalanceIterations: minimumRebalanceResult?.iterations ?? 0,
 
     minimumRebalanceRemainingDeficit:
-      minimumRebalanceResult
-        ?.remainingDeficit ?? [],
+      minimumRebalanceResult?.remainingDeficit ?? [],
 
     swapMoves:
-      swapRebalanceResult
-        ?.swaps ??
-      swapRebalanceResult
-        ?.totalSwaps ??
-      0,
+      swapRebalanceResult?.swaps ?? swapRebalanceResult?.totalSwaps ?? 0,
 
-    swapIterations:
-      swapRebalanceResult
-        ?.iterations ??
-      0,
+    swapIterations: swapRebalanceResult?.iterations ?? 0,
 
-    minimumSplitMoves:
-      minimumSplitResult?.moves ?? 0,
+    minimumSplitMoves: minimumSplitResult?.moves ?? 0,
 
-    minimumSplitDetails:
-      minimumSplitResult?.details ?? [],
+    minimumSplitDetails: minimumSplitResult?.details ?? [],
+
+    relaxedAssignmentsCount: relaxedFallbackResult.assigned,
+    relaxedAssignmentDetails: relaxedFallbackResult.details,
+    stillUnassignedProfessors: relaxedFallbackResult.stillUnassigned,
 
     intentionalMinimumSplits,
 
@@ -6086,26 +5527,19 @@ async function generatePlan(
 
     exportPath,
 
-    statistics:
-      statisticsRows,
+    statistics: statisticsRows,
 
-    minimumPeriodsEnabled:
-      minimumEnabled,
+    minimumPeriodsEnabled: minimumEnabled,
 
-    minimumPeriods:
-      minimumEnabled
-        ? minimumTarget
-        : null,
+    minimumPeriods: minimumEnabled ? minimumTarget : null,
 
     minimumsReached,
 
     minimumStatistics,
 
-    selectedSupervisors:
-      selectedSupervisorIds,
+    selectedSupervisors: selectedSupervisorIds,
 
-    assignments:
-      result,
+    assignments: result,
   };
 }
 // ============================================================
