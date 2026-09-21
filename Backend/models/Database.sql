@@ -95,24 +95,17 @@ CREATE TABLE IF NOT EXISTS session_links (
 -- =========================================================
 -- SESSION GROUPS
 -- =========================================================
-
 CREATE TABLE IF NOT EXISTS session_groups (
     id SERIAL PRIMARY KEY,
-
     excel_batch_id UUID NOT NULL,
-
     date DATE NOT NULL,
-
     period_label TEXT NOT NULL,
-
     crn TEXT,
-
-    professor_id INT
-        REFERENCES professors(id),
-
+    professor_id INT REFERENCES professors(id),
     required_supervisors INT DEFAULT 1,
-
-    sessions INT NOT NULL DEFAULT 1
+    sessions INT NOT NULL DEFAULT 1,
+    time_from TEXT,
+    time_to TEXT
 );
 
 

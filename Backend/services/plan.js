@@ -608,7 +608,7 @@ async function fetchPlan(planId) {
   // جلب Assignments مع كل بيانات Session Group
   // ---------------------------------------------------
 
- const assignmentsResult = await pool.query(
+const assignmentsResult = await pool.query(
   `
   SELECT
     a.id,
@@ -621,7 +621,7 @@ async function fetchPlan(planId) {
 
     -- بيانات Session Group
     sg.crn,
-    sg.course_name,
+    c.name AS course_name,
     sg.date,
     sg.period_label,
     sg.time_from,
@@ -640,6 +640,10 @@ async function fetchPlan(planId) {
 
   JOIN session_groups sg
     ON sg.id = a.session_group_id
+
+  -- جلب اسم الكورس من جدول courses باستخدام CRN
+  LEFT JOIN courses c
+    ON c.crn = sg.crn
 
   LEFT JOIN professors p
     ON p.id = sg.professor_id

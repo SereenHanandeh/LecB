@@ -4632,16 +4632,14 @@ async function generatePlan(
     const supervisor = supervisors.find(
       (s) => Number(s.id) === Number(row.supervisor_id),
     );
-
     return {
-      courseName: row.course_name,
+      "Course Name": row.course_name,
       CRN: row.crn,
-      Professor: row.professor,
-      day: row.day,
+      Professor: row.professor_name,
       Date: row.date,
-      timeFrom: row.timeFrom,
-      timeTo: row.timeTo,
-      Period: row.period,
+      "Time From": row.time_from,
+      "Time To": row.time_to,
+      Period: row.period_label,
       Supervisor: supervisor?.name ?? row.supervisor_id,
     };
   });
