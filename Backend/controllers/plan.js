@@ -9,6 +9,7 @@ const {
   moveAssignmentSvc,
   planStats,
   getAllPlans,
+  updatePlanStatusRow,
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
@@ -642,6 +643,59 @@ async function getStats(req, res) {
 }
 
 // =====================================================
+// Update Plan Status (Accept / Reject)
+// =====================================================
+
+async function updateStatus(req, res) {
+  try {
+    const { planId } = req.params;
+    const { status } = req.body;
+
+    // planId هو UUID
+    if (!planId) {
+      return res.status(400).json({
+        success: false,
+        error: "planId is required",
+      });
+    }
+
+    const allowedStatuses = ["draft", "accepted", "rejected"];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "status must be one of: draft, accepted, rejected",
+      });
+    }
+
+    console.log("========================================");
+    console.log("📌 UPDATE PLAN STATUS");
+    console.log("📌 planId:", planId);
+    console.log("📌 status:", status);
+    console.log("========================================");
+
+    const updated = await updatePlanStatusRow(planId, status);
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        error: "Plan not found",
+      });
+    }
+
+    console.log("✅ Plan status updated successfully:", updated);
+
+    return res.json({
+      success: true,
+      message: "Plan status updated successfully",
+      data: updated,
+    });
+  } catch (err) {
+    return handleError(res, err, "Error updating plan status");
+  }
+}
+// =====================================================
 // Exports
 // =====================================================
 
@@ -657,4 +711,5 @@ module.exports = {
   unlockAssignment,
   moveAssignment,
   getStats,
+  updateStatus,
 };

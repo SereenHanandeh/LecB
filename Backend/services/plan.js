@@ -407,6 +407,37 @@ async function saveAffinities(planId, items = []) {
   return saved;
 }
 
+
+// =====================================================
+// Update Plan Status (Accept / Reject)
+// =====================================================
+
+async function updatePlanStatusRow(planId, status) {
+  const allowedStatuses = ["draft", "accepted", "rejected"];
+
+  if (!allowedStatuses.includes(status)) {
+    throw new Error(
+      `Invalid status "${status}". Must be one of: ${allowedStatuses.join(", ")}`,
+    );
+  }
+
+  const result = await pool.query(
+    `
+    UPDATE plans
+    SET status = $1
+    WHERE id = $2
+    RETURNING *
+    `,
+    [status, planId],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return result.rows[0];
+}
+
 // =====================================================
 // Plan Context
 // =====================================================
@@ -624,6 +655,7 @@ async function fetchPlan(planId) {
   return {
     ...ctx,
     assignments: assignmentsResult.rows,
+    status: ctx.plan?.status ?? "draft",
   };
 }
 
@@ -2244,6 +2276,8 @@ module.exports = {
 
   clearAssignments,
   saveAssignments,
+
+   updatePlanStatusRow,
 
   moveAssignmentSvc,
 
