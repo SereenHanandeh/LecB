@@ -719,13 +719,42 @@ function canSupervisorTakeProfessor(supervisor, professorBundles) {
     }
   }
 
+  // --------------------------------------------------------
+  // Sequential Period Attachment Rule (Hard Rule)
+  // --------------------------------------------------------
+
+  const newRanksByDay = new Map();
+
+  for (const bundle of professorBundles) {
+    const representative = bundle.groups?.[0];
+
+    const day = dateISO(representative.date);
+    const period = normalizePeriod(representative.period_label);
+    const rank = getPeriodRank(period);
+
+    if (!day || rank === null || rank === undefined) {
+      continue;
+    }
+
+    if (!newRanksByDay.has(day)) {
+      newRanksByDay.set(day, []);
+    }
+
+    newRanksByDay.get(day).push(rank);
+  }
+
+  for (const [day, ranks] of newRanksByDay) {
+    if (!isValidSequentialPeriodAttachment(supervisor, day, ranks)) {
+      return false;
+    }
+  }
+
   if (hasConsecutiveDayConflict(supervisor, professorBundles)) {
     return false;
   }
 
   return true;
 }
-
 // ============================================================
 // Consecutive Period Score
 // ============================================================
