@@ -608,49 +608,52 @@ async function fetchPlan(planId) {
   // جلب Assignments مع كل بيانات Session Group
   // ---------------------------------------------------
 
-  const assignmentsResult = await pool.query(
-    `
-    SELECT
-      a.id,
-      a.plan_id,
-      a.session_group_id,
-      a.supervisor_id,
+ const assignmentsResult = await pool.query(
+  `
+  SELECT
+    a.id,
+    a.plan_id,
+    a.session_group_id,
+    a.supervisor_id,
 
-      -- بيانات المشرف
-      s.name AS supervisor_name,
+    -- بيانات المشرف
+    s.name AS supervisor_name,
 
-      -- بيانات Session Group
-      sg.crn,
-      sg.date,
-      sg.period_label,
-      sg.required_supervisors,
-      sg.sessions,
+    -- بيانات Session Group
+    sg.crn,
+    sg.name,
+    sg.date,
+    sg.period_label,
+    sg.time_from,
+    sg.time_to,
+    sg.required_supervisors,
+    sg.sessions,
 
-      -- بيانات الأستاذ
-      sg.professor_id,
-      p.name AS professor_name
+    -- بيانات الأستاذ
+    sg.professor_id,
+    p.name AS professor_name
 
-    FROM assignments a
+  FROM assignments a
 
-    JOIN supervisors s
-      ON s.id = a.supervisor_id
+  JOIN supervisors s
+    ON s.id = a.supervisor_id
 
-    JOIN session_groups sg
-      ON sg.id = a.session_group_id
+  JOIN session_groups sg
+    ON sg.id = a.session_group_id
 
-    LEFT JOIN professors p
-      ON p.id = sg.professor_id
+  LEFT JOIN professors p
+    ON p.id = sg.professor_id
 
-    WHERE a.plan_id = $1
+  WHERE a.plan_id = $1
 
-    ORDER BY
-      sg.date,
-      sg.period_label,
-      sg.id,
-      a.id
-    `,
-    [planId]
-  );
+  ORDER BY
+    sg.date,
+    sg.period_label,
+    sg.id,
+    a.id
+  `,
+  [planId]
+);
 
   return {
     ...ctx,
