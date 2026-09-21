@@ -6,6 +6,7 @@ const planRouter = express.Router();
 
 planRouter.get("/", Plan.getPlans);
 
+planRouter.get("/accepted-supervisor-stats", getAcceptedSupervisorStats);
 planRouter.post("/", Plan.createPlan);
 
 planRouter.post("/:planId/duty-pool", Plan.setDutyPool);
@@ -28,6 +29,6 @@ planRouter.post("/:planId/lock", Plan.lockAssignment);
 
 planRouter.delete("/:planId/lock/:sessionGroupId", Plan.unlockAssignment);
 
-planRouter.delete("/:id",Plan.deletePlan)
+planRouter.delete("/:planId", deletePlan);
 
 module.exports = planRouter;

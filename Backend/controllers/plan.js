@@ -10,6 +10,7 @@ const {
   planStats,
   getAllPlans,
   updatePlanStatusRow,
+  deletePlanSvc,
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
@@ -696,35 +697,73 @@ async function updateStatus(req, res) {
   }
 }
 
+// =====================================================
+// Delete Plan
+// =====================================================
+
 async function deletePlan(req, res) {
+  const planId = Number(req.params.planId);
+
+  if (!Number.isInteger(planId) || planId <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: "رقم الخطة غير صحيح.",
+    });
+  }
+
   try {
-    const planId = Number(req.params.id);
-
-    if (!Number.isInteger(planId)) {
-      return res.status(400).json({
-        success: false,
-        error: "رقم الخطة غير صحيح",
-      });
-    }
-
-    await pool.query(
-      `DELETE FROM plans WHERE id = $1`,
-      [planId]
-    );
+    const deletedPlan = await deletePlanSvc(planId);
 
     return res.json({
       success: true,
-      message: "تم حذف الخطة بنجاح",
+      message: "تم حذف الخطة بنجاح.",
+      data: deletedPlan,
     });
+
   } catch (error) {
-    console.error("🔴 DELETE PLAN ERROR:", error);
+    console.error("DELETE PLAN ERROR:", error);
+
+    if (error.status === 404) {
+      return res.status(404).json({
+        success: false,
+        error: error.message,
+      });
+    }
 
     return res.status(500).json({
       success: false,
-      error: "تعذر حذف الخطة",
+      error: "تعذر حذف الخطة.",
     });
   }
 }
+
+// =====================================================
+// Accepted Plans Supervisor Statistics
+// =====================================================
+
+async function getAcceptedSupervisorStats(req, res) {
+  try {
+    const stats = await getAcceptedSupervisorStatsSvc();
+
+    return res.json({
+      success: true,
+      data: stats,
+    });
+
+  } catch (error) {
+    console.error(
+      "GET ACCEPTED SUPERVISOR STATS ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: "تعذر تحميل إحصائيات المشرفين.",
+    });
+  }
+}
+
+
 // =====================================================
 // Exports
 // =====================================================
@@ -742,5 +781,6 @@ module.exports = {
   moveAssignment,
   getStats,
   updateStatus,
-  deletePlan
+  deletePlan,
+  getAcceptedSupervisorStats
 };

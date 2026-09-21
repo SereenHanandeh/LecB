@@ -1065,6 +1065,128 @@ async function saveAssignments(planId, assignments = []) {
   );
 }
 
+// =====================================================
+// حذف خطة كاملة
+// =====================================================
+
+async function deletePlanSvc(planId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // التأكد أن الخطة موجودة
+    const planResult = await client.query(
+      `
+      SELECT id
+      FROM plans
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [planId]
+    );
+
+    if (planResult.rowCount === 0) {
+      const error = new Error("الخطة غير موجودة.");
+      error.status = 404;
+      throw error;
+    }
+
+    // حذف التعيينات الخاصة بالخطة
+    await client.query(
+      `
+      DELETE FROM assignments
+      WHERE plan_id = $1
+      `,
+      [planId]
+    );
+
+    // حذف المشرفين المناوبين للخطة
+    await client.query(
+      `
+      DELETE FROM duty_pool
+      WHERE plan_window_id = $1
+      `,
+      [planId]
+    );
+
+    // حذف الـ affinities الخاصة بالخطة
+    await client.query(
+      `
+      DELETE FROM affinities
+      WHERE plan_id = $1
+      `,
+      [planId]
+    );
+
+    // حذف الخطة نفسها
+    const deletedResult = await client.query(
+      `
+      DELETE FROM plans
+      WHERE id = $1
+      RETURNING id
+      `,
+      [planId]
+    );
+
+    await client.query("COMMIT");
+
+    return deletedResult.rows[0];
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// =====================================================
+// إحصائيات المشرفين في جميع الخطط المقبولة
+// =====================================================
+
+async function getAcceptedSupervisorStatsSvc() {
+  const result = await pool.query(`
+    SELECT
+      s.id AS supervisor_id,
+      s.name AS supervisor_name,
+
+      COUNT(
+        DISTINCT (
+          a.plan_id,
+          g.date,
+          g.period_label
+        )
+      ) AS total_periods,
+
+      COUNT(*) AS total_assignments,
+
+      COUNT(DISTINCT a.plan_id) AS accepted_plans
+
+    FROM assignments a
+
+    INNER JOIN plans p
+      ON p.id = a.plan_id
+
+    INNER JOIN supervisors s
+      ON s.id = a.supervisor_id
+
+    INNER JOIN session_groups g
+      ON g.id = a.session_group_id
+
+    WHERE p.status = 'accepted'
+
+    GROUP BY s.id, s.name
+
+    ORDER BY total_periods DESC, s.name ASC
+  `);
+
+  return result.rows;
+}
+
+
+
+
 module.exports = {
   createPlanRow,
 
@@ -1089,4 +1211,7 @@ module.exports = {
 
   planStats,
   getAllPlans,
+
+  deletePlanSvc,
+  getAcceptedSupervisorStatsSvc,
 };
