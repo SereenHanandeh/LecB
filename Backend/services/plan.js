@@ -1899,58 +1899,153 @@ async function moveAssignmentSvc(
   }
 ) {
   const groupId = Number(sessionGroupId);
+  const fromId = Number(fromSupervisorId);
   const toId = Number(toSupervisorId);
+
+  // =====================================================
+  // 1️⃣ التحقق من IDs
+  // =====================================================
 
   if (!Number.isInteger(groupId)) {
     throw new Error("Invalid sessionGroupId");
+  }
+
+  if (!Number.isInteger(fromId)) {
+    throw new Error("Invalid fromSupervisorId");
   }
 
   if (!Number.isInteger(toId)) {
     throw new Error("Invalid toSupervisorId");
   }
 
+  if (!planId) {
+    throw new Error("Invalid planId");
+  }
+
   // =====================================================
-// 🔗 التحقق من Affinity
-// =====================================================
+  // 2️⃣ التحقق من الـ Session Group
+  // =====================================================
 
-const affinityResult = await pool.query(
-  `
-  SELECT
-    a.supervisor_id,
-    a.name,
-    a.professor_id
-  FROM affinities a
-  JOIN session_groups sg
-    ON sg.professor_id = a.professor_id
-  WHERE a.plan_id = $1
-    AND sg.id = $2
-  LIMIT 1
-  `,
-  [planId, groupId]
-);
+  const groupResult = await pool.query(
+    `
+    SELECT
+      sg.id,
+      sg.professor_id
+    FROM session_groups sg
+    WHERE sg.id = $1
+    `,
+    [groupId]
+  );
 
-if (affinityResult.rowCount > 0) {
-  const affinitySupervisorId =
-    Number(affinityResult.rows[0].supervisor_id);
-
-  if (affinitySupervisorId !== toId) {
+  if (groupResult.rowCount === 0) {
     throw new Error(
-      `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`
+      `Session Group ${groupId} does not exist`
     );
   }
-}
 
-  // احذف أي assignment موجود لهذا الـ Session Group
+  const professorId = groupResult.rows[0].professor_id;
+
+  // =====================================================
+  // 3️⃣ التحقق من الـ Affinity
+  // =====================================================
+
+  const affinityResult = await pool.query(
+    `
+    SELECT
+      a.supervisor_id,
+      a.name,
+      a.professor_id
+    FROM affinities a
+    WHERE a.plan_id = $1
+      AND a.professor_id = $2
+    LIMIT 1
+    `,
+    [planId, professorId]
+  );
+
+  if (affinityResult.rowCount > 0) {
+    const affinitySupervisorId = Number(
+      affinityResult.rows[0].supervisor_id
+    );
+
+    console.log("🔗 Affinity check:");
+    console.log("Professor ID:", professorId);
+    console.log("Affinity Supervisor:", affinitySupervisorId);
+    console.log("Requested Supervisor:", toId);
+
+    if (affinitySupervisorId !== toId) {
+      throw new Error(
+        `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`
+      );
+    }
+  }
+
+  // =====================================================
+  // 4️⃣ التأكد من الـ Assignment الحالي
+  // =====================================================
+
+  const currentAssignmentResult = await pool.query(
+    `
+    SELECT
+      supervisor_id
+    FROM assignments
+    WHERE plan_id = $1
+      AND session_group_id = $2
+    LIMIT 1
+    `,
+    [planId, groupId]
+  );
+
+  if (currentAssignmentResult.rowCount === 0) {
+    throw new Error(
+      `No assignment found for session group ${groupId}`
+    );
+  }
+
+  const currentSupervisorId = Number(
+    currentAssignmentResult.rows[0].supervisor_id
+  );
+
+  console.log("👤 Current Supervisor:", currentSupervisorId);
+  console.log("👤 From Supervisor:", fromId);
+  console.log("👤 To Supervisor:", toId);
+
+  // =====================================================
+  // 5️⃣ التأكد أن fromSupervisorId صحيح
+  // =====================================================
+
+  if (currentSupervisorId !== fromId) {
+    throw new Error(
+      `Current assignment belongs to supervisor ${currentSupervisorId}, not ${fromId}`
+    );
+  }
+
+  // =====================================================
+  // 6️⃣ إذا نفس المشرف، لا داعي للتعديل
+  // =====================================================
+
+  if (fromId === toId) {
+    return;
+  }
+
+  // =====================================================
+  // 7️⃣ حذف الـ Assignment القديم
+  // =====================================================
+
   await pool.query(
     `
     DELETE FROM assignments
     WHERE plan_id = $1
       AND session_group_id = $2
+      AND supervisor_id = $3
     `,
-    [planId, groupId]
+    [planId, groupId, fromId]
   );
 
-  // أضف المشرف الجديد
+  // =====================================================
+  // 8️⃣ إضافة المشرف الجديد
+  // =====================================================
+
   await pool.query(
     `
     INSERT INTO assignments (
@@ -1967,13 +2062,19 @@ if (affinityResult.rowCount > 0) {
     ]
   );
 
-  // التعديل اليدوي يعتبر Lock
+  // =====================================================
+  // 9️⃣ التعديل اليدوي يعتبر Lock
+  // =====================================================
+
   await lockRow(
     planId,
     groupId,
     toId
   );
+
+  console.log("✅ Assignment moved successfully");
 }
+
 
 // =====================================================
 // Statistics

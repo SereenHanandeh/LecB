@@ -527,19 +527,35 @@ async function unlockAssignment(req, res) {
 // Move Assignment
 // =====================================================
 
+
 async function moveAssignment(req, res) {
   try {
     const { planId } = req.params;
 
-    const { fromSupervisorId, toSupervisorId, sessionGroupId } = req.body;
+    const {
+      fromSupervisorId,
+      toSupervisorId,
+      sessionGroupId,
+    } = req.body;
 
-    // planId هو UUID
+    console.log("====================================");
+    console.log("🔄 MOVE ASSIGNMENT REQUEST");
+    console.log("📌 planId:", planId);
+    console.log("📌 req.body:", req.body);
+    console.log("📌 fromSupervisorId:", fromSupervisorId);
+    console.log("📌 toSupervisorId:", toSupervisorId);
+    console.log("📌 sessionGroupId:", sessionGroupId);
+    console.log("====================================");
+
+    // التأكد من وجود القيم
     if (
       !planId ||
       fromSupervisorId == null ||
       toSupervisorId == null ||
       sessionGroupId == null
     ) {
+      console.log("❌ Missing required values");
+
       return res.status(400).json({
         success: false,
         error:
@@ -548,29 +564,38 @@ async function moveAssignment(req, res) {
     }
 
     const parsedFromSupervisorId = Number(fromSupervisorId);
-
     const parsedToSupervisorId = Number(toSupervisorId);
-
     const parsedSessionGroupId = Number(sessionGroupId);
 
+    console.log("🔢 Parsed values:");
+    console.log("from:", parsedFromSupervisorId);
+    console.log("to:", parsedToSupervisorId);
+    console.log("sessionGroup:", parsedSessionGroupId);
+
+    // التأكد أن القيم أرقام صحيحة
     if (
       !Number.isInteger(parsedFromSupervisorId) ||
       !Number.isInteger(parsedToSupervisorId) ||
       !Number.isInteger(parsedSessionGroupId)
     ) {
+      console.log("❌ Invalid integer values");
+
       return res.status(400).json({
         success: false,
-        error: "Supervisor IDs and sessionGroupId must be valid integers",
+        error:
+          "Supervisor IDs and sessionGroupId must be valid integers",
       });
     }
 
+    console.log("✅ Controller validation passed");
+
     await moveAssignmentSvc(planId, {
       fromSupervisorId: parsedFromSupervisorId,
-
       toSupervisorId: parsedToSupervisorId,
-
       sessionGroupId: parsedSessionGroupId,
     });
+
+    console.log("✅ Assignment moved successfully");
 
     return res.json({
       success: true,
@@ -578,9 +603,15 @@ async function moveAssignment(req, res) {
       data: null,
     });
   } catch (err) {
+    console.error("❌ MOVE ASSIGNMENT ERROR");
+    console.error(err);
+    console.error("Message:", err.message);
+    console.error("Stack:", err.stack);
+
     return handleError(res, err, "Error moving assignment");
   }
 }
+
 
 // =====================================================
 // Get Stats
