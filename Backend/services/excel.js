@@ -315,6 +315,70 @@ function getSupervisorSlotKey(day, period) {
   return `${day}|${normalizePeriod(period)}`;
 }
 
+
+function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
+  const cleanRanks = (newRanks || []).filter(
+    (rank) => rank !== null && rank !== undefined,
+  );
+
+  if (!cleanRanks.length) {
+    // لا يوجد Rank معروف لهذه الفترة، القاعدة لا تنطبق
+    return true;
+  }
+
+  const sortedNew = [...new Set(cleanRanks)].sort((a, b) => a - b);
+
+  // الفترات الجديدة نفسها يجب أن تكون متسلسلة بدون فراغ داخلي
+  for (let i = 1; i < sortedNew.length; i++) {
+    if (sortedNew[i] !== sortedNew[i - 1] + 1) {
+      return false;
+    }
+  }
+
+  const existingRanks = supervisor.byDayPeriodRanks?.[day];
+
+  if (!existingRanks || existingRanks.size === 0) {
+    // أول تعيين لهذا المشرف في هذا اليوم
+    return true;
+  }
+
+  const existingMax = Math.max(...existingRanks);
+
+  // الفترات الجديدة يجب أن تبدأ مباشرة بعد آخر فترة موجودة
+  return sortedNew[0] === existingMax + 1;
+}
+
+  // --------------------------------------------------------
+  // Sequential Period Attachment Rule (Hard Rule)
+  // --------------------------------------------------------
+
+  const newRanksByDay = new Map();
+
+  for (const bundle of professorBundles) {
+    const representative = bundle.groups?.[0];
+
+    const day = dateISO(representative.date);
+    const period = normalizePeriod(representative.period_label);
+    const rank = getPeriodRank(period);
+
+    if (!day || rank === null || rank === undefined) {
+      continue;
+    }
+
+    if (!newRanksByDay.has(day)) {
+      newRanksByDay.set(day, []);
+    }
+
+    newRanksByDay.get(day).push(rank);
+  }
+
+  for (const [day, ranks] of newRanksByDay) {
+    if (!isValidSequentialPeriodAttachment(supervisor, day, ranks)) {
+      return false;
+    }
+  }
+
+
 function addDaysISO(day, amount) {
   const match = String(day).match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
@@ -2862,6 +2926,10 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
     rank !== undefined &&
     supervisor.byDayPeriodRanks?.[day]?.has(rank)
   ) {
+    return false;
+  }
+
+   if (!isValidSequentialPeriodAttachment(supervisor, day, [rank])) {
     return false;
   }
 
