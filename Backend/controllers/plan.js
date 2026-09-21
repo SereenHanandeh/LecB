@@ -703,12 +703,16 @@ async function updateStatus(req, res) {
 // =====================================================
 
 async function deletePlan(req, res) {
-  const planId = Number(req.params.planId);
+  const { planId } = req.params;
 
-  if (!Number.isInteger(planId) || planId <= 0) {
+  console.log("🗑️ DELETE PLAN");
+  console.log("📌 planId:", planId);
+  console.log("📌 type:", typeof planId);
+
+  if (!planId) {
     return res.status(400).json({
       success: false,
-      error: "رقم الخطة غير صحيح.",
+      error: "معرف الخطة مطلوب.",
     });
   }
 
@@ -720,9 +724,8 @@ async function deletePlan(req, res) {
       message: "تم حذف الخطة بنجاح.",
       data: deletedPlan,
     });
-
   } catch (error) {
-    console.error("DELETE PLAN ERROR:", error);
+    console.error("❌ DELETE PLAN ERROR:", error);
 
     if (error.status === 404) {
       return res.status(404).json({
@@ -734,6 +737,7 @@ async function deletePlan(req, res) {
     return res.status(500).json({
       success: false,
       error: "تعذر حذف الخطة.",
+      debug: error.message,
     });
   }
 }
