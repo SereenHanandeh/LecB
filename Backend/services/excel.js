@@ -427,31 +427,34 @@ function attachGroupToSupervisor(supervisor, group, result) {
 
   supervisor.assignedGroups.add(groupId);
 
- result.push({
-  session_group_id: groupId,
+  result.push({
+    session_group_id: groupId,
 
-  crn: group.crn,
+    crn: group.crn,
 
-  // ✅ اسم المقرر
-  course_name: group.course_name ?? "",
+    // ✅ اسم المقرر
+    course_name: group.course_name ?? "",
 
-  // ✅ الأستاذ
-  professor: group.professor_name || group.professor || "",
-  professor_id: group.professor_id ?? null,
+    // ✅ الأستاذ
+    professor: group.professor_name || group.professor || "",
+    professor_id: group.professor_id ?? null,
 
-  // ✅ التاريخ
-  date: dateISO(group.date),
+    // ✅ رقم القاعة
+    room_number: group.room_number ?? null,
 
-  // ✅ الفترة
-  period: normalizePeriod(group.period_label),
+    // ✅ التاريخ
+    date: dateISO(group.date),
 
-  // ✅ وقت البداية والنهاية
-  time_from: group.time_from ?? "",
-  time_to: group.time_to ?? "",
+    // ✅ الفترة
+    period: normalizePeriod(group.period_label),
 
-  // ✅ المشرف
-  supervisor_id: id,
-});
+    // ✅ وقت البداية والنهاية
+    time_from: group.time_from ?? "",
+    time_to: group.time_to ?? "",
+
+    // ✅ المشرف
+    supervisor_id: id,
+  });
 
   return true;
 }
@@ -2997,6 +3000,7 @@ function minimumSplitFallback({
             crn: group.crn,
             course_name: group.course_name ?? "",
             professor: group.professor_name || group.professor || "",
+            room_number: group.room_number ?? null,
             professor_id: group.professor_id ?? null,
             date: dateISO(group.date),
             period: normalizePeriod(group.period_label),
@@ -3550,8 +3554,38 @@ async function generatePlan(
     throw new Error(`Plan ${planId} was not found.`);
   }
 
-  const { groups = [], supervisors = [], pre = [], locks = [], aff = [] } = ctx;
+  const {
+    groups = [],
+    supervisors = [],
+    pre = [],
+    locks = [],
+    aff = [],
+    rooms = [],
+  } = ctx;
 
+  // =====================================================
+  // خريطة أستاذ -> قاعة
+  // =====================================================
+
+  const professorRoomMap = new Map();
+
+  for (const item of rooms) {
+    const pid = Number(item.professor_id ?? item.professorId);
+
+    const roomNumber = String(item.room_number ?? item.roomNumber ?? "").trim();
+
+    if (Number.isFinite(pid) && roomNumber) {
+      professorRoomMap.set(pid, roomNumber);
+    }
+  }
+
+  for (const group of groups) {
+    const pid = Number(group.professor_id);
+
+    group.room_number = Number.isFinite(pid)
+      ? (professorRoomMap.get(pid) ?? null)
+      : null;
+  }
   console.log("📦 Groups from getPlanContext:", groups.length);
 
   // ==========================================================
@@ -4630,21 +4664,23 @@ async function generatePlan(
   }
 
   const distributionRows = result.map((row) => {
-  const supervisor = supervisors.find(
-    (s) => Number(s.id) === Number(row.supervisor_id),
-  );
+    const supervisor = supervisors.find(
+      (s) => Number(s.id) === Number(row.supervisor_id),
+    );
 
-  return {
-    "Course Name": row.course_name ?? "",
-    CRN: row.crn ?? "",
-    Professor: row.professor ?? row.professor_name ?? "",
-    Date: row.date ?? "",
-    "Time From": row.time_from ?? "",
-    "Time To": row.time_to ?? "",
-    Period: row.period ?? row.period_label ?? "",
-    Supervisor: supervisor?.name ?? row.supervisor_id ?? "",
-  };
-});
+    return {
+      "Course Name": row.course_name ?? "",
+      CRN: row.crn ?? "",
+      Professor: row.professor ?? row.professor_name ?? "",
+          Room: row.room_number ?? "",
+
+      Date: row.date ?? "",
+      "Time From": row.time_from ?? "",
+      "Time To": row.time_to ?? "",
+      Period: row.period ?? row.period_label ?? "",
+      Supervisor: supervisor?.name ?? row.supervisor_id ?? "",
+    };
+  });
 
   const conflictsRows = conflicts.map((item) => ({
     Date: item.date ?? "",

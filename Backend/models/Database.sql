@@ -91,7 +91,35 @@ CREATE TABLE IF NOT EXISTS session_links (
     UNIQUE(raw_session_id)
 );
 
+CREATE TABLE IF NOT EXISTS room_assignments (
+    id SERIAL PRIMARY KEY,
 
+    plan_id UUID NOT NULL,
+
+    professor_id INT
+        REFERENCES professors(id),
+
+    name TEXT,
+
+    room_number TEXT NOT NULL,
+
+    CONSTRAINT valid_room_number CHECK (
+        room_number ~ '^[0-9]+$' AND (
+            room_number::int BETWEEN 1 AND 14
+            OR room_number::int BETWEEN 40 AND 46
+        )
+    ),
+
+    UNIQUE (plan_id, professor_id)
+);
+
+CREATE INDEX IF NOT EXISTS
+idx_room_assignments_plan
+ON room_assignments(plan_id);
+
+CREATE INDEX IF NOT EXISTS
+idx_room_assignments_professor
+ON room_assignments(professor_id);
 -- =========================================================
 -- SESSION GROUPS
 -- =========================================================

@@ -23,13 +23,7 @@ async function createPlanRow({
     VALUES ($1, $2, $3, $4, $5)
     RETURNING *
     `,
-    [
-      name,
-      excelBatchId,
-      dateFrom,
-      dateTo,
-      category,
-    ]
+    [name, excelBatchId, dateFrom, dateTo, category],
   );
 
   return result.rows[0];
@@ -45,16 +39,14 @@ async function saveDutyPool(planId, supervisorIds = []) {
     DELETE FROM duty_pool
     WHERE plan_window_id = $1
     `,
-    [planId]
+    [planId],
   );
 
   for (const supervisorId of supervisorIds) {
     const sid = Number(supervisorId);
 
     if (!Number.isInteger(sid)) {
-      console.warn(
-        `⚠️ Invalid supervisor ID: ${supervisorId}`
-      );
+      console.warn(`⚠️ Invalid supervisor ID: ${supervisorId}`);
       continue;
     }
 
@@ -67,7 +59,7 @@ async function saveDutyPool(planId, supervisorIds = []) {
       VALUES ($1, $2)
       ON CONFLICT DO NOTHING
       `,
-      [planId, sid]
+      [planId, sid],
     );
   }
 }
@@ -88,49 +80,37 @@ async function getDutyPool(planId) {
     WHERE dp.plan_window_id = $1
     ORDER BY s.id
     `,
-    [planId]
+    [planId],
   );
 
   return result.rows;
 }
 
-
 // =====================================================
 // Preassignments
 // =====================================================
 
-async function savePreassignments(
-  planId,
-  items = []
-) {
+async function savePreassignments(planId, items = []) {
   await pool.query(
     `
     DELETE FROM preassignments
     WHERE plan_id = $1
     `,
-    [planId]
+    [planId],
   );
 
   for (const item of items) {
-    const sessionGroupId = Number(
-      item.sessionGroupId
-    );
+    const sessionGroupId = Number(item.sessionGroupId);
 
-    const supervisorId = Number(
-      item.supervisorId
-    );
+    const supervisorId = Number(item.supervisorId);
 
     if (!Number.isInteger(sessionGroupId)) {
-      console.warn(
-        `⚠️ Invalid session group ID: ${item.sessionGroupId}`
-      );
+      console.warn(`⚠️ Invalid session group ID: ${item.sessionGroupId}`);
       continue;
     }
 
     if (!Number.isInteger(supervisorId)) {
-      console.warn(
-        `⚠️ Invalid supervisor ID: ${item.supervisorId}`
-      );
+      console.warn(`⚠️ Invalid supervisor ID: ${item.supervisorId}`);
       continue;
     }
 
@@ -141,13 +121,11 @@ async function savePreassignments(
       FROM session_groups
       WHERE id = $1
       `,
-      [sessionGroupId]
+      [sessionGroupId],
     );
 
     if (groupCheck.rowCount === 0) {
-      console.warn(
-        `⚠️ Session group ${sessionGroupId} does not exist`
-      );
+      console.warn(`⚠️ Session group ${sessionGroupId} does not exist`);
       continue;
     }
 
@@ -159,13 +137,11 @@ async function savePreassignments(
       WHERE id = $1
         AND active = TRUE
       `,
-      [supervisorId]
+      [supervisorId],
     );
 
     if (supervisorCheck.rowCount === 0) {
-      console.warn(
-        `⚠️ Supervisor ${supervisorId} does not exist or inactive`
-      );
+      console.warn(`⚠️ Supervisor ${supervisorId} does not exist or inactive`);
       continue;
     }
 
@@ -179,11 +155,7 @@ async function savePreassignments(
       VALUES ($1, $2, $3)
       ON CONFLICT DO NOTHING
       `,
-      [
-        planId,
-        sessionGroupId,
-        supervisorId,
-      ]
+      [planId, sessionGroupId, supervisorId],
     );
   }
 }
@@ -205,7 +177,7 @@ async function saveAffinities(planId, items = []) {
     DELETE FROM affinities
     WHERE plan_id = $1
     `,
-    [planId]
+    [planId],
   );
 
   if (!Array.isArray(items) || !items.length) {
@@ -221,21 +193,14 @@ async function saveAffinities(planId, items = []) {
       // Professor ID
       // =====================================================
 
-      let professorId = Number(
-        item.professorId ??
-        item.professor_id ??
-        NaN
-      );
+      let professorId = Number(item.professorId ?? item.professor_id ?? NaN);
 
       // =====================================================
       // Professor Name
       // =====================================================
 
       let professorName = String(
-        item.professorName ??
-        item.professor_name ??
-        item.name ??
-        ""
+        item.professorName ?? item.professor_name ?? item.name ?? "",
       )
         .trim()
         .replace(/\s+/g, " ");
@@ -245,9 +210,7 @@ async function saveAffinities(planId, items = []) {
       // =====================================================
 
       const supervisorId = Number(
-        item.supervisorId ??
-        item.supervisor_id ??
-        NaN
+        item.supervisorId ?? item.supervisor_id ?? NaN,
       );
 
       // =====================================================
@@ -255,11 +218,7 @@ async function saveAffinities(planId, items = []) {
       // =====================================================
 
       if (!Number.isInteger(supervisorId)) {
-        console.warn(
-          "⚠️ Invalid supervisor ID:",
-          supervisorId,
-          item
-        );
+        console.warn("⚠️ Invalid supervisor ID:", supervisorId, item);
         continue;
       }
 
@@ -270,12 +229,12 @@ async function saveAffinities(planId, items = []) {
         WHERE id = $1
           AND active = TRUE
         `,
-        [supervisorId]
+        [supervisorId],
       );
 
       if (supervisorCheck.rowCount === 0) {
         console.warn(
-          `⚠️ Supervisor ${supervisorId} does not exist or inactive`
+          `⚠️ Supervisor ${supervisorId} does not exist or inactive`,
         );
         continue;
       }
@@ -289,7 +248,7 @@ async function saveAffinities(planId, items = []) {
         if (!professorName) {
           console.warn(
             "⚠️ Affinity ignored: no professor ID and no professor name.",
-            item
+            item,
           );
           continue;
         }
@@ -303,22 +262,17 @@ async function saveAffinities(planId, items = []) {
           ORDER BY id
           LIMIT 1
           `,
-          [professorName]
+          [professorName],
         );
 
         if (professorByName.rowCount === 0) {
-          console.warn(
-            `⚠️ Professor not found by name: "${professorName}"`
-          );
+          console.warn(`⚠️ Professor not found by name: "${professorName}"`);
           continue;
         }
 
-        professorId = Number(
-          professorByName.rows[0].id
-        );
+        professorId = Number(professorByName.rows[0].id);
 
-        professorName =
-          professorByName.rows[0].name;
+        professorName = professorByName.rows[0].name;
       }
 
       // =====================================================
@@ -331,23 +285,19 @@ async function saveAffinities(planId, items = []) {
         FROM professors
         WHERE id = $1
         `,
-        [professorId]
+        [professorId],
       );
 
       if (professorCheck.rowCount === 0) {
-        console.warn(
-          `⚠️ Professor ${professorId} does not exist`
-        );
+        console.warn(`⚠️ Professor ${professorId} does not exist`);
         continue;
       }
 
-      const professor =
-        professorCheck.rows[0];
+      const professor = professorCheck.rows[0];
 
-      const canonicalProfessorName =
-        String(professor.name || professorName)
-          .trim()
-          .replace(/\s+/g, " ");
+      const canonicalProfessorName = String(professor.name || professorName)
+        .trim()
+        .replace(/\s+/g, " ");
 
       // =====================================================
       // حفظ Affinity
@@ -371,43 +321,182 @@ async function saveAffinities(planId, items = []) {
           professorId,
           item.crn ?? null,
           supervisorId,
-        ]
+        ],
       );
 
-      const savedAffinity =
-        insertResult.rows[0];
+      const savedAffinity = insertResult.rows[0];
 
       saved.push(savedAffinity);
 
-      console.log(
-        "✅ Affinity saved:",
-        {
-          planId,
-          professorId,
-          professorName: canonicalProfessorName,
-          supervisorId,
-          crn: item.crn ?? null,
-        }
-      );
+      console.log("✅ Affinity saved:", {
+        planId,
+        professorId,
+        professorName: canonicalProfessorName,
+        supervisorId,
+        crn: item.crn ?? null,
+      });
     } catch (error) {
-      console.error(
-        "❌ Error saving affinity:",
-        item,
-        error
-      );
+      console.error("❌ Error saving affinity:", item, error);
     }
   }
 
   console.log("========================================");
-  console.log(
-    `🔗 Affinities saved: ${saved.length}/${items.length}`
-  );
+  console.log(`🔗 Affinities saved: ${saved.length}/${items.length}`);
   console.log("========================================");
 
   return saved;
 }
 
+// =====================================================
+// Room Assignments
+// Professor -> Room
+// =====================================================
 
+const VALID_ROOMS = new Set([
+  ...Array.from({ length: 14 }, (_, i) => String(i + 1)),
+  ...Array.from({ length: 7 }, (_, i) => String(i + 40)),
+]);
+
+async function saveRoomAssignments(planId, items = []) {
+  console.log("========================================");
+  console.log("🏠 SAVING ROOM ASSIGNMENTS");
+  console.log("📌 Plan ID:", planId);
+  console.log("📌 Received items:", items);
+  console.log("========================================");
+
+  await pool.query(
+    `
+    DELETE FROM room_assignments
+    WHERE plan_id = $1
+    `,
+    [planId],
+  );
+
+  if (!Array.isArray(items) || !items.length) {
+    console.log("ℹ️ No room assignments to save.");
+    return [];
+  }
+
+  const saved = [];
+
+  for (const item of items) {
+    try {
+      let professorId = Number(item.professorId ?? item.professor_id ?? NaN);
+
+      let professorName = String(
+        item.professorName ?? item.professor_name ?? item.name ?? "",
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+
+      const roomNumber = String(
+        item.roomNumber ?? item.room_number ?? "",
+      ).trim();
+
+      if (!VALID_ROOMS.has(roomNumber)) {
+        console.warn("⚠️ Invalid room number:", roomNumber, item);
+        continue;
+      }
+
+      if (!Number.isInteger(professorId)) {
+        if (!professorName) {
+          console.warn(
+            "⚠️ Room assignment ignored: no professor ID and no professor name.",
+            item,
+          );
+          continue;
+        }
+
+        const professorByName = await pool.query(
+          `
+          SELECT id, name
+          FROM professors
+          WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+          ORDER BY id
+          LIMIT 1
+          `,
+          [professorName],
+        );
+
+        if (professorByName.rowCount === 0) {
+          console.warn(`⚠️ Professor not found by name: "${professorName}"`);
+          continue;
+        }
+
+        professorId = Number(professorByName.rows[0].id);
+        professorName = professorByName.rows[0].name;
+      }
+
+      const professorCheck = await pool.query(
+        `SELECT id, name FROM professors WHERE id = $1`,
+        [professorId],
+      );
+
+      if (professorCheck.rowCount === 0) {
+        console.warn(`⚠️ Professor ${professorId} does not exist`);
+        continue;
+      }
+
+      const canonicalProfessorName = String(
+        professorCheck.rows[0].name || professorName,
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+
+      const insertResult = await pool.query(
+        `
+        INSERT INTO room_assignments (
+          plan_id, professor_id, name, room_number
+        )
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (plan_id, professor_id)
+        DO UPDATE SET
+          name = EXCLUDED.name,
+          room_number = EXCLUDED.room_number
+        RETURNING *
+        `,
+        [planId, professorId, canonicalProfessorName, roomNumber],
+      );
+
+      saved.push(insertResult.rows[0]);
+
+      console.log("✅ Room assignment saved:", {
+        planId,
+        professorId,
+        professorName: canonicalProfessorName,
+        roomNumber,
+      });
+    } catch (error) {
+      console.error("❌ Error saving room assignment:", item, error);
+    }
+  }
+
+  console.log(`🏠 Room assignments saved: ${saved.length}/${items.length}`);
+
+  return saved;
+}
+
+async function getRoomAssignments(planId) {
+  const result = await pool.query(
+    `
+    SELECT
+      ra.id,
+      ra.plan_id,
+      ra.professor_id,
+      ra.name,
+      ra.room_number,
+      p.name AS professor_name
+    FROM room_assignments ra
+    LEFT JOIN professors p
+      ON p.id = ra.professor_id
+    WHERE ra.plan_id = $1
+    ORDER BY ra.professor_id
+    `,
+    [planId],
+  );
+
+  return result.rows;
+}
 // =====================================================
 // Update Plan Status (Accept / Reject)
 // =====================================================
@@ -443,7 +532,6 @@ async function updatePlanStatusRow(planId, status) {
 // =====================================================
 
 async function getPlanContext(planId) {
-
   // ---------------------------------------------------
   // 1. الخطة
   // ---------------------------------------------------
@@ -454,13 +542,11 @@ async function getPlanContext(planId) {
     FROM plans
     WHERE id = $1
     `,
-    [planId]
+    [planId],
   );
 
   if (planResult.rowCount === 0) {
-    throw new Error(
-      `Plan ${planId} not found`
-    );
+    throw new Error(`Plan ${planId} not found`);
   }
 
   const plan = planResult.rows[0];
@@ -468,8 +554,8 @@ async function getPlanContext(planId) {
   // ---------------------------------------------------
   // 2. Session Groups
   // ---------------------------------------------------
-const sessionsResult = await pool.query(
-  `
+  const sessionsResult = await pool.query(
+    `
   SELECT
     sg.*,
     p.name AS professor_name
@@ -483,12 +569,8 @@ const sessionsResult = await pool.query(
     sg.period_label,
     sg.id
   `,
-  [
-    plan.excel_batch_id,
-    plan.date_from,
-    plan.date_to,
-  ]
-);
+    [plan.excel_batch_id, plan.date_from, plan.date_to],
+  );
 
   // ---------------------------------------------------
   // 3. Supervisors
@@ -500,7 +582,7 @@ const sessionsResult = await pool.query(
     FROM supervisors
     WHERE active = TRUE
     ORDER BY id
-    `
+    `,
   );
 
   // ---------------------------------------------------
@@ -518,7 +600,7 @@ const sessionsResult = await pool.query(
     WHERE dp.plan_window_id = $1
     ORDER BY s.id
     `,
-    [planId]
+    [planId],
   );
 
   // ---------------------------------------------------
@@ -535,7 +617,7 @@ const sessionsResult = await pool.query(
       ON s.id = pa.supervisor_id
     WHERE pa.plan_id = $1
     `,
-    [planId]
+    [planId],
   );
 
   // ---------------------------------------------------
@@ -552,7 +634,7 @@ const sessionsResult = await pool.query(
       ON s.id = al.supervisor_id
     WHERE al.plan_id = $1
     `,
-    [planId]
+    [planId],
   );
 
   // ---------------------------------------------------
@@ -560,7 +642,7 @@ const sessionsResult = await pool.query(
   // ---------------------------------------------------
 
   const affResult = await pool.query(
-  `
+    `
   SELECT
     a.id,
     a.plan_id,
@@ -578,20 +660,42 @@ const sessionsResult = await pool.query(
   WHERE a.plan_id = $1
   ORDER BY a.professor_id, a.id
   `,
-  [planId]
-);
+    [planId],
+  );
+
+  // ---------------------------------------------------
+  // 9. Room Assignments
+  // ---------------------------------------------------
+
+  const roomsResult = await pool.query(
+    `
+    SELECT
+      ra.id,
+      ra.plan_id,
+      ra.professor_id,
+      ra.name,
+      ra.room_number,
+      p.name AS professor_name
+    FROM room_assignments ra
+    LEFT JOIN professors p
+      ON p.id = ra.professor_id
+    WHERE ra.plan_id = $1
+    ORDER BY ra.professor_id
+    `,
+    [planId],
+  );
 
   return {
-  plan,
-  groups: sessionsResult.rows,
-  supervisors: supervisorsResult.rows,
-  dutyPool: dutyPoolResult.rows,
-  pre: preResult.rows,
-  locks: locksResult.rows,
-  affinities: affResult.rows,
-  aff: affResult.rows,
-
-};
+    plan,
+    groups: sessionsResult.rows,
+    supervisors: supervisorsResult.rows,
+    dutyPool: dutyPoolResult.rows,
+    pre: preResult.rows,
+    locks: locksResult.rows,
+    affinities: affResult.rows,
+    aff: affResult.rows,
+    rooms: roomsResult.rows,
+  };
 }
 
 // =====================================================
@@ -599,7 +703,6 @@ const sessionsResult = await pool.query(
 // =====================================================
 
 async function fetchPlan(planId) {
-
   // جلب Context الخطة
   const ctx = await getPlanContext(planId);
 
@@ -607,8 +710,8 @@ async function fetchPlan(planId) {
   // جلب Assignments مع كل بيانات Session Group
   // ---------------------------------------------------
 
-const assignmentsResult = await pool.query(
-  `
+  const assignmentsResult = await pool.query(
+    `
   SELECT
     a.id,
     a.plan_id,
@@ -655,8 +758,8 @@ const assignmentsResult = await pool.query(
     sg.id,
     a.id
   `,
-  [planId]
-);
+    [planId],
+  );
 
   return {
     ...ctx,
@@ -669,11 +772,7 @@ const assignmentsResult = await pool.query(
 // Locks
 // =====================================================
 
-async function lockRow(
-  planId,
-  sessionGroupId,
-  supervisorId
-) {
+async function lockRow(planId, sessionGroupId, supervisorId) {
   await pool.query(
     `
     INSERT INTO assignment_locks (
@@ -686,25 +785,18 @@ async function lockRow(
     DO UPDATE SET
       supervisor_id = EXCLUDED.supervisor_id
     `,
-    [
-      planId,
-      sessionGroupId,
-      supervisorId,
-    ]
+    [planId, sessionGroupId, supervisorId],
   );
 }
 
-async function unlockRow(
-  planId,
-  sessionGroupId
-) {
+async function unlockRow(planId, sessionGroupId) {
   await pool.query(
     `
     DELETE FROM assignment_locks
     WHERE plan_id = $1
       AND session_group_id = $2
     `,
-    [planId, sessionGroupId]
+    [planId, sessionGroupId],
   );
 }
 
@@ -718,7 +810,7 @@ async function clearAssignments(planId) {
     DELETE FROM assignments
     WHERE plan_id = $1
     `,
-    [planId]
+    [planId],
   );
 }
 
@@ -728,11 +820,7 @@ async function clearAssignments(planId) {
 
 async function moveAssignmentSvc(
   planId,
-  {
-    fromSupervisorId,
-    toSupervisorId,
-    sessionGroupId,
-  }
+  { fromSupervisorId, toSupervisorId, sessionGroupId },
 ) {
   const groupId = Number(sessionGroupId);
   const fromId = Number(fromSupervisorId);
@@ -770,13 +858,11 @@ async function moveAssignmentSvc(
     FROM session_groups sg
     WHERE sg.id = $1
     `,
-    [groupId]
+    [groupId],
   );
 
   if (groupResult.rowCount === 0) {
-    throw new Error(
-      `Session Group ${groupId} does not exist`
-    );
+    throw new Error(`Session Group ${groupId} does not exist`);
   }
 
   const professorId = groupResult.rows[0].professor_id;
@@ -796,13 +882,11 @@ async function moveAssignmentSvc(
       AND a.professor_id = $2
     LIMIT 1
     `,
-    [planId, professorId]
+    [planId, professorId],
   );
 
   if (affinityResult.rowCount > 0) {
-    const affinitySupervisorId = Number(
-      affinityResult.rows[0].supervisor_id
-    );
+    const affinitySupervisorId = Number(affinityResult.rows[0].supervisor_id);
 
     console.log("🔗 Affinity check:");
     console.log("Professor ID:", professorId);
@@ -811,7 +895,7 @@ async function moveAssignmentSvc(
 
     if (affinitySupervisorId !== toId) {
       throw new Error(
-        `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`
+        `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`,
       );
     }
   }
@@ -829,17 +913,15 @@ async function moveAssignmentSvc(
       AND session_group_id = $2
     LIMIT 1
     `,
-    [planId, groupId]
+    [planId, groupId],
   );
 
   if (currentAssignmentResult.rowCount === 0) {
-    throw new Error(
-      `No assignment found for session group ${groupId}`
-    );
+    throw new Error(`No assignment found for session group ${groupId}`);
   }
 
   const currentSupervisorId = Number(
-    currentAssignmentResult.rows[0].supervisor_id
+    currentAssignmentResult.rows[0].supervisor_id,
   );
 
   console.log("👤 Current Supervisor:", currentSupervisorId);
@@ -852,7 +934,7 @@ async function moveAssignmentSvc(
 
   if (currentSupervisorId !== fromId) {
     throw new Error(
-      `Current assignment belongs to supervisor ${currentSupervisorId}, not ${fromId}`
+      `Current assignment belongs to supervisor ${currentSupervisorId}, not ${fromId}`,
     );
   }
 
@@ -875,7 +957,7 @@ async function moveAssignmentSvc(
       AND session_group_id = $2
       AND supervisor_id = $3
     `,
-    [planId, groupId, fromId]
+    [planId, groupId, fromId],
   );
 
   // =====================================================
@@ -891,35 +973,25 @@ async function moveAssignmentSvc(
     )
     VALUES ($1, $2, $3)
     `,
-    [
-      planId,
-      groupId,
-      toId,
-    ]
+    [planId, groupId, toId],
   );
 
   // =====================================================
   // 9️⃣ التعديل اليدوي يعتبر Lock
   // =====================================================
 
-  await lockRow(
-    planId,
-    groupId,
-    toId
-  );
+  await lockRow(planId, groupId, toId);
 
   console.log("✅ Assignment moved successfully");
 }
-
 
 // =====================================================
 // Statistics
 // =====================================================
 
 async function planStats(planId) {
-  const distributionResult =
-    await pool.query(
-      `
+  const distributionResult = await pool.query(
+    `
       SELECT
         s.id AS supervisor_id,
         s.name AS supervisor_name,
@@ -948,12 +1020,11 @@ async function planStats(planId) {
       ORDER BY
         s.id
       `,
-      [planId]
-    );
+    [planId],
+  );
 
   return {
-    distribution:
-      distributionResult.rows,
+    distribution: distributionResult.rows,
   };
 }
 
@@ -1002,44 +1073,25 @@ async function saveAssignments(planId, assignments = []) {
   console.log("💾 SAVE ASSIGNMENTS DEBUG");
   console.log("🆔 planId:", planId);
   console.log("📦 assignments type:", typeof assignments);
-  console.log(
-    "📦 assignments isArray:",
-    Array.isArray(assignments),
-  );
-  console.log(
-    "📦 assignments length:",
-    assignments.length,
-  );
-  console.log(
-    "📦 first assignment:",
-    assignments[0],
-  );
+  console.log("📦 assignments isArray:", Array.isArray(assignments));
+  console.log("📦 assignments length:", assignments.length);
+  console.log("📦 first assignment:", assignments[0]);
   console.log("========================================");
 
   await clearAssignments(planId);
 
   for (const assignment of assignments) {
-    const sessionGroupId = Number(
-      assignment.session_group_id,
-    );
+    const sessionGroupId = Number(assignment.session_group_id);
 
-    const supervisorId = Number(
-      assignment.supervisor_id,
-    );
+    const supervisorId = Number(assignment.supervisor_id);
 
     if (!Number.isInteger(sessionGroupId)) {
-      console.warn(
-        "⚠️ Invalid session_group_id:",
-        assignment,
-      );
+      console.warn("⚠️ Invalid session_group_id:", assignment);
       continue;
     }
 
     if (!Number.isInteger(supervisorId)) {
-      console.warn(
-        "⚠️ Invalid supervisor_id:",
-        assignment,
-      );
+      console.warn("⚠️ Invalid supervisor_id:", assignment);
       continue;
     }
 
@@ -1051,17 +1103,11 @@ async function saveAssignments(planId, assignments = []) {
         ($1, $2, $3)
       ON CONFLICT DO NOTHING
       `,
-      [
-        planId,
-        sessionGroupId,
-        supervisorId,
-      ],
+      [planId, sessionGroupId, supervisorId],
     );
   }
 
-  console.log(
-    `💾 SAVED ASSIGNMENTS: ${assignments.length}`,
-  );
+  console.log(`💾 SAVED ASSIGNMENTS: ${assignments.length}`);
 }
 
 // =====================================================
@@ -1082,7 +1128,7 @@ async function deletePlanSvc(planId) {
       WHERE id = $1
       FOR UPDATE
       `,
-      [planId]
+      [planId],
     );
 
     if (planResult.rowCount === 0) {
@@ -1097,7 +1143,7 @@ async function deletePlanSvc(planId) {
       DELETE FROM assignments
       WHERE plan_id = $1
       `,
-      [planId]
+      [planId],
     );
 
     // حذف المشرفين المناوبين للخطة
@@ -1106,7 +1152,7 @@ async function deletePlanSvc(planId) {
       DELETE FROM duty_pool
       WHERE plan_window_id = $1
       `,
-      [planId]
+      [planId],
     );
 
     // حذف الـ affinities الخاصة بالخطة
@@ -1115,7 +1161,7 @@ async function deletePlanSvc(planId) {
       DELETE FROM affinities
       WHERE plan_id = $1
       `,
-      [planId]
+      [planId],
     );
 
     // حذف الخطة نفسها
@@ -1125,13 +1171,12 @@ async function deletePlanSvc(planId) {
       WHERE id = $1
       RETURNING id
       `,
-      [planId]
+      [planId],
     );
 
     await client.query("COMMIT");
 
     return deletedResult.rows[0];
-
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -1143,7 +1188,6 @@ async function deletePlanSvc(planId) {
 // =====================================================
 // إحصائيات المشرفين في جميع الخطط المقبولة
 // =====================================================
-
 
 async function getAcceptedSupervisorStatsSvc() {
   const result = await pool.query(`
@@ -1196,10 +1240,6 @@ async function getAcceptedSupervisorStatsSvc() {
   return result.rows;
 }
 
-
-
-
-
 module.exports = {
   createPlanRow,
 
@@ -1218,10 +1258,11 @@ module.exports = {
   clearAssignments,
   saveAssignments,
 
-   updatePlanStatusRow,
+  updatePlanStatusRow,
 
   moveAssignmentSvc,
-
+  saveRoomAssignments,
+  getRoomAssignments,
   planStats,
   getAllPlans,
 

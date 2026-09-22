@@ -21,6 +21,8 @@ planRouter.post("/:planId/status", Plan.updateStatus);
 
 planRouter.get("/:planId", Plan.getPlan);
 
+planRouter.post("/:planId/rooms", Plan.setRoomAssignments);
+
 planRouter.get("/:planId/stats", Plan.getStats);
 
 planRouter.patch("/:planId/assignments", Plan.moveAssignment);

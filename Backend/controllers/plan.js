@@ -615,6 +615,22 @@ async function moveAssignment(req, res) {
   }
 }
 
+async function setRoomAssignments(req, res) {
+  try {
+    const { planId } = req.params;
+    const { rooms } = req.body;
+
+    const saved = await saveRoomAssignments(planId, rooms || []);
+
+    return res.json({ success: true, data: saved });
+  } catch (err) {
+    console.error("❌ Error saving room assignments:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to save room assignments",
+    });
+  }
+}
 
 // =====================================================
 // Get Stats
@@ -789,6 +805,7 @@ module.exports = {
   lockAssignment,
   unlockAssignment,
   moveAssignment,
+  setRoomAssignments,
   getStats,
   updateStatus,
   deletePlan,
