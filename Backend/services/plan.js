@@ -711,7 +711,7 @@ async function fetchPlan(planId) {
   // ---------------------------------------------------
 
   const assignmentsResult = await pool.query(
-    `
+  `
   SELECT
     a.id,
     a.plan_id,
@@ -733,7 +733,10 @@ async function fetchPlan(planId) {
 
     -- بيانات الأستاذ
     sg.professor_id,
-    p.name AS professor_name
+    p.name AS professor_name,
+
+    -- ✅ رقم القاعة
+    ra.room_number
 
   FROM assignments a
 
@@ -743,12 +746,16 @@ async function fetchPlan(planId) {
   JOIN session_groups sg
     ON sg.id = a.session_group_id
 
-  -- الآن فقط كنسخة احتياطية في حال كان course_name فارغًا
   LEFT JOIN courses c
     ON c.crn = sg.crn
 
   LEFT JOIN professors p
     ON p.id = sg.professor_id
+
+  -- ✅ ربط القاعة عبر الأستاذ + نفس الخطة
+  LEFT JOIN room_assignments ra
+    ON ra.professor_id = sg.professor_id
+    AND ra.plan_id = a.plan_id
 
   WHERE a.plan_id = $1
 
@@ -758,8 +765,8 @@ async function fetchPlan(planId) {
     sg.id,
     a.id
   `,
-    [planId],
-  );
+  [planId]
+);
 
   return {
     ...ctx,
