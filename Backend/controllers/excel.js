@@ -696,28 +696,7 @@ async function processExcel(buffer) {
       group.sessions,
     ]);
 
-    if (sessionGroupRows.length) {
-      await bulkInsert(
-        client,
-        "session_groups",
-        [
-          "excel_batch_id", // 1
-          "date", // 2
-          "period_label", // 3
-          "time_from", // 4
-          "time_to", // 5
-          "crn", // 6
-          "course_name", // 7  ← جديد
-          "professor_id", // 8
-          "required_supervisors", // 9
-          "sessions",
-        ],
-        sessionGroupRows,
-        500,
-      );
-    }
-
-    if (sessionGroupRows.length) {
+      if (sessionGroupRows.length) {
       await bulkInsert(
         client,
         "session_groups",
