@@ -3074,6 +3074,211 @@ function minimumSplitFallback({
 }
 
 // ============================================================
+// FINAL FAIRNESS SPLIT (BUNDLE-LEVEL, UNCONDITIONAL)
+// ============================================================
+//
+// الهدف: تقليل الفرق بين أعلى وأقل مشرف حملاً إلى 0 أو 1 قدر
+// الإمكان، حتى لو كانت قاعدة "الحد الأدنى" غير مفعّلة، وحتى لو
+// كانت هناك دكاترة موزّعين مسبقًا عبر Relaxed/Forced Coverage
+// خارج نطاق professorAssignments.
+//
+// يعمل على مستوى "محاضرة واحدة" (Bundle) وليس الدكتور كاملاً،
+// وينقل من المشرف الأكثر حملاً إلى الأقل حملاً، بشرط:
+// - عدم لمس الدكاترة الملزمين (Forced: Lock/Preassignment/Affinity)
+// - عدم كسر القيد الفيزيائي للـ Slot (عبر canSingleBundleFitSupervisor)
+// - عدم النزول بالمشرف المانح تحت الحد الأدنى إذا كان مفعّلاً
+// ============================================================
+
+function finalFairnessSplit({
+  cand,
+  selectedSupervisorIds,
+  professorGroups,
+  bundles,
+  bundleMap,
+  result,
+  bundleAssignments,
+  professorAssignments,
+  forcedProfessorAssignments,
+  minimumEnabled,
+  minimumTarget,
+  splitProfessorKeys,
+}) {
+  console.log("========================================");
+  console.log("⚖️ STARTING FINAL FAIRNESS SPLIT");
+  console.log("========================================");
+
+  const details = [];
+
+  if (selectedSupervisorIds.length <= 1) {
+    console.log("⚖️ Skipped: only one supervisor selected.");
+    return { moves: 0, details };
+  }
+
+  function rebuild() {
+    rebuildCandidateState(
+      cand,
+      bundles,
+      professorGroups,
+      bundleAssignments,
+      professorAssignments,
+      result,
+    );
+  }
+
+  rebuild();
+
+  const maxIterations = Math.max(30, bundles.length * 2);
+
+  let iterations = 0;
+  let totalMoves = 0;
+
+  while (iterations < maxIterations) {
+    iterations++;
+
+    const supervisorsList = selectedSupervisorIds
+      .map((id) => cand[Number(id)])
+      .filter(Boolean);
+
+    if (!supervisorsList.length) break;
+
+    const totals = supervisorsList.map((s) => Number(s.total || 0));
+
+    const minTotal = Math.min(...totals);
+    const maxTotal = Math.max(...totals);
+    const difference = maxTotal - minTotal;
+
+    if (difference <= 1) {
+      console.log(
+        `⚖️ Fairness target reached (difference=${difference}). Stopping.`,
+      );
+      break;
+    }
+
+    // الأقل حملاً أولاً (مستقبِلون محتملون)
+    const targets = [...supervisorsList].sort(
+      (a, b) => Number(a.total || 0) - Number(b.total || 0),
+    );
+
+    // الأكثر حملاً أولاً (مانحون محتملون)
+    const donors = [...supervisorsList].sort(
+      (a, b) => Number(b.total || 0) - Number(a.total || 0),
+    );
+
+    let moved = false;
+
+    for (const target of targets) {
+      const targetTotal = Number(target.total || 0);
+
+      for (const donor of donors) {
+        if (Number(donor.id) === Number(target.id)) continue;
+
+        const donorTotal = Number(donor.total || 0);
+
+        // النقل يجب أن يحسّن التوازن فعليًا
+        if (donorTotal - 1 < targetTotal + 1) continue;
+
+        // احترام الحد الأدنى للمانح إذا كانت القاعدة مفعّلة
+        if (minimumEnabled && donorTotal - 1 < minimumTarget) continue;
+
+        const donorBundleKeys = [...bundleAssignments.entries()]
+          .filter(([, supId]) => Number(supId) === Number(donor.id))
+          .map(([key]) => key);
+
+        for (const bundleKey of donorBundleKeys) {
+          const bundle = bundleMap.get(bundleKey);
+
+          if (!bundle) continue;
+
+          if (forcedProfessorAssignments.has(bundle.professorKey)) continue;
+
+          const representative = bundle.groups?.[0];
+
+          if (!representative) continue;
+
+          const day = dateISO(representative.date);
+          const period = normalizePeriod(representative.period_label);
+
+          if (!canSingleBundleFitSupervisor(target, day, period)) continue;
+
+          // ------------------------------------------------
+          // تنفيذ النقل
+          // ------------------------------------------------
+
+          const groupIds = new Set(
+            (bundle.groups || [])
+              .map((g) => Number(g.id))
+              .filter(Number.isFinite),
+          );
+
+          for (let i = result.length - 1; i >= 0; i--) {
+            if (groupIds.has(Number(result[i].session_group_id))) {
+              result.splice(i, 1);
+            }
+          }
+
+          bundleAssignments.set(bundleKey, target.id);
+
+          for (const group of bundle.groups || []) {
+            result.push({
+              session_group_id: Number(group.id),
+              crn: group.crn,
+              course_name: group.course_name ?? "",
+              professor: group.professor_name || group.professor || "",
+              room_number: group.room_number ?? null,
+              professor_id: group.professor_id ?? null,
+              date: dateISO(group.date),
+              period: normalizePeriod(group.period_label),
+              time_from: group.time_from ?? "",
+              time_to: group.time_to ?? "",
+              supervisor_id: target.id,
+            });
+          }
+
+          rebuild();
+
+          splitProfessorKeys.add(bundle.professorKey);
+
+          details.push({
+            professor: bundle.professor,
+            professor_id: bundle.professor_id,
+            date: day,
+            period,
+            from_supervisor_id: donor.id,
+            to_supervisor_id: target.id,
+          });
+
+          totalMoves++;
+
+          console.log(
+            `⚖️ FAIRNESS MOVE #${totalMoves}: ${bundle.professor} (${day} - ${period}) : Supervisor ${donor.id} → Supervisor ${target.id}`,
+          );
+
+          moved = true;
+
+          break;
+        }
+
+        if (moved) break;
+      }
+
+      if (moved) break;
+    }
+
+    if (!moved) {
+      console.log("⚠️ No valid fairness move found. Stopping.");
+      break;
+    }
+  }
+
+  console.log("========================================");
+  console.log("⚖️ FINAL FAIRNESS SPLIT FINISHED");
+  console.log(`⚖️ Total fairness moves: ${totalMoves}`);
+  console.log("========================================");
+
+  return { moves: totalMoves, details };
+}
+
+// ============================================================
 // SWAP REBALANCE ENGINE
 // ============================================================
 
@@ -4481,6 +4686,25 @@ async function generatePlan(
 
   console.log("🧩 Minimum Split Fallback result:", minimumSplitResult);
 
+  const finalFairnessSplitProfessorKeys = new Set();
+
+  const finalFairnessResult = finalFairnessSplit({
+    cand,
+    selectedSupervisorIds,
+    professorGroups,
+    bundles,
+    bundleMap: bundleMapForSplit,
+    result,
+    bundleAssignments,
+    professorAssignments,
+    forcedProfessorAssignments,
+    minimumEnabled,
+    minimumTarget,
+    splitProfessorKeys: finalFairnessSplitProfessorKeys,
+  });
+
+  console.log("⚖️ Final Fairness Split result:", finalFairnessResult);
+
   // ==========================================================
   // FINAL CONSISTENCY REBUILD
   // ==========================================================
@@ -4590,10 +4814,11 @@ async function generatePlan(
   for (const [professorKey, supervisorId] of professorSupervisorCheck) {
     const assigned = professorAssignments.get(professorKey);
 
-    if (supervisorId === "MULTIPLE") {
+        if (supervisorId === "MULTIPLE") {
       if (
         minimumSplitResult.splitProfessorKeys.has(professorKey) ||
-        singleDaySplitProfessorKeys.has(professorKey)
+        singleDaySplitProfessorKeys.has(professorKey) ||
+        finalFairnessSplitProfessorKeys.has(professorKey)
       ) {
         intentionalMinimumSplits++;
         continue;
@@ -4865,6 +5090,35 @@ async function generatePlan(
     );
   }
 
+    if (finalFairnessResult?.details?.length) {
+    const fairnessRows = finalFairnessResult.details.map((item) => {
+      const fromSupervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.from_supervisor_id),
+      );
+
+      const toSupervisor = supervisors.find(
+        (s) => Number(s.id) === Number(item.to_supervisor_id),
+      );
+
+      return {
+        Professor: item.professor,
+        "Professor ID": item.professor_id ?? "",
+        Date: item.date,
+        Period: item.period,
+        "From Supervisor": fromSupervisor?.name ?? item.from_supervisor_id,
+        "To Supervisor": toSupervisor?.name ?? item.to_supervisor_id,
+        Note: "نقل لتحقيق أقصى عدالة ممكنة بين المشرفين (Final Fairness Pass)",
+      };
+    });
+
+    const fairnessSheet = xlsx.utils.json_to_sheet(fairnessRows);
+
+    xlsx.utils.book_append_sheet(
+      workbook,
+      fairnessSheet,
+      "Final Fairness Split",
+    );
+  }
   // ==========================================================
   // Export Path
   // ==========================================================
@@ -4928,6 +5182,9 @@ async function generatePlan(
 
     minimumSplitDetails: minimumSplitResult?.details ?? [],
 
+    finalFairnessMoves: finalFairnessResult?.moves ?? 0,
+
+    finalFairnessDetails: finalFairnessResult?.details ?? [],
     relaxedAssignmentsCount: relaxedFallbackResult.assigned,
     relaxedAssignmentDetails: relaxedFallbackResult.details,
 
