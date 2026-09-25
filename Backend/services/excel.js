@@ -1511,9 +1511,12 @@ function rebalanceAssignments({
 
   console.log("📊 Before rebalance:", metrics);
 
+  // ملاحظة: تم رفع عامل التكرار (من 2 إلى 4) لإعطاء محرك التوازن
+  // مساحة أكبر للتقارب نحو أقل فرق ممكن بين المشرفين، خصوصًا في
+  // الخطط الكبيرة (عدد أساتذة/مشرفين مرتفع).
   const maxIterations = Math.max(
-    10,
-    professorGroups.length * selectedSupervisorIds.length * 2,
+    20,
+    professorGroups.length * selectedSupervisorIds.length * 4,
   );
 
   let iterations = 0;
@@ -1868,9 +1871,11 @@ function minimumRebalanceAssignments({
   console.log("🎯 Minimum target:", minimumTarget);
   console.log("📊 BEFORE Minimum Rebalance:", metrics);
 
+  // ملاحظة: تم رفع عامل التكرار (من 3 إلى 5) لضمان قدرة المحرك
+  // على الوصول للحد الأدنى لكل المشرفين مع الحفاظ على العدالة.
   const maxIterations = Math.max(
-    10,
-    professorGroups.length * selectedSupervisorIds.length * 3,
+    20,
+    professorGroups.length * selectedSupervisorIds.length * 5,
   );
 
   let iterations = 0;
@@ -2915,7 +2920,9 @@ function minimumSplitFallback({
 
   rebuild();
 
-  const maxIterations = Math.max(20, bundles.length * 2);
+  // ملاحظة: رفعنا الحد الأدنى والمضاعف (20 → 40، ×2 → ×4) لإعطاء
+  // محرك التقسيم مساحة كافية للوصول لأقرب توزيع عادل ممكن.
+  const maxIterations = Math.max(40, bundles.length * 4);
 
   let iterations = 0;
   let totalMoves = 0;
@@ -3127,7 +3134,10 @@ function finalFairnessSplit({
 
   rebuild();
 
-  const maxIterations = Math.max(30, bundles.length * 2);
+  // ملاحظة: رفعنا الحد الأدنى والمضاعف (30 → 60، ×2 → ×4) لضمان
+  // أن الجولة الأخيرة للعدالة تصل فعليًا إلى أقل فرق ممكن (0 أو 1)
+  // بين المشرفين قبل التوقف، خصوصًا في الخطط الكبيرة.
+  const maxIterations = Math.max(60, bundles.length * 4);
 
   let iterations = 0;
   let totalMoves = 0;
@@ -3309,9 +3319,11 @@ function swapProfessorsBetweenSupervisors({
   let iterations = 0;
   let totalSwaps = 0;
 
+  // ملاحظة: تم رفع عامل التكرار (من 2 إلى 4) لإعطاء محرك المبادلة
+  // فرصة أكبر لإيجاد مبادلات تُحسّن العدالة بين المشرفين.
   const maxIterations = Math.max(
-    10,
-    professorGroups.length * selectedSupervisorIds.length * 2,
+    20,
+    professorGroups.length * selectedSupervisorIds.length * 4,
   );
 
   function getSupervisorProfessors(supervisorId) {
