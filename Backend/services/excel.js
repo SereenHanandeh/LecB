@@ -3784,25 +3784,35 @@ async function generatePlan(
   // خريطة أستاذ -> قاعة
   // =====================================================
 
-  const professorRoomMap = new Map();
+const professorRoomMap = new Map();
 
-  for (const item of rooms) {
-    const pid = Number(item.professor_id ?? item.professorId);
+for (const item of rooms) {
+  const pid = Number(item.professor_id ?? item.professorId);
+  const roomNumber = String(item.room_number ?? item.roomNumber ?? "").trim();
+  if (!Number.isFinite(pid) || !roomNumber) continue;
 
-    const roomNumber = String(item.room_number ?? item.roomNumber ?? "").trim();
+  const day = dateISO(item.date ?? "");
+  const period = normalizePeriod(item.period ?? item.period_label ?? "");
 
-    if (Number.isFinite(pid) && roomNumber) {
-      professorRoomMap.set(pid, roomNumber);
-    }
+  if (day && period) {
+    professorRoomMap.set(`${pid}|${day}|${period}`, roomNumber);
+  } else if (!professorRoomMap.has(`pid:${pid}`)) {
+    // توافق مع بيانات قديمة كانت تحفظ قاعة واحدة لكل دكتور بدون فترة
+    professorRoomMap.set(`pid:${pid}`, roomNumber);
   }
+}
 
-  for (const group of groups) {
-    const pid = Number(group.professor_id);
+for (const group of groups) {
+  const pid = Number(group.professor_id);
+  const day = dateISO(group.date);
+  const period = normalizePeriod(group.period_label);
 
-    group.room_number = Number.isFinite(pid)
-      ? (professorRoomMap.get(pid) ?? null)
-      : null;
-  }
+  group.room_number = Number.isFinite(pid)
+    ? (professorRoomMap.get(`${pid}|${day}|${period}`) ??
+       professorRoomMap.get(`pid:${pid}`) ??
+       null)
+    : null;
+}
   console.log("📦 Groups from getPlanContext:", groups.length);
 
   // ==========================================================
