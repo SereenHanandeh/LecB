@@ -302,6 +302,7 @@ async function generate(req, res) {
       variant = 1,
       minimumPeriodsEnabled = false,
       minimumPeriods = 4,
+      twoProfessorsPerSupervisorEnabled = false, // ⬅️ إضافة جديدة
     } = req.body || {};
 
     if (!planId) {
@@ -343,6 +344,11 @@ async function generate(req, res) {
       });
     }
 
+    // ⬅️ إضافة جديدة
+    const parsedTwoProfessorsEnabled = Boolean(
+      twoProfessorsPerSupervisorEnabled,
+    );
+
     console.log(
       "🚀 GENERATING PLAN",
       {
@@ -352,6 +358,8 @@ async function generate(req, res) {
           parsedMinimumEnabled,
         minimumPeriods:
           parsedMinimumPeriods,
+        twoProfessorsPerSupervisorEnabled:
+          parsedTwoProfessorsEnabled, // ⬅️ إضافة جديدة
       },
     );
 
@@ -361,6 +369,7 @@ async function generate(req, res) {
         parsedVariant,
         parsedMinimumEnabled,
         parsedMinimumPeriods,
+        parsedTwoProfessorsEnabled, // ⬅️ إضافة جديدة (المعامل الخامس)
       );
 
     console.log(
