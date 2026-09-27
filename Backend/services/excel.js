@@ -55,10 +55,6 @@ function importExcel(filePath) {
     raw: false,
   });
 
-  // ============================================================
-  // Excel Statistics
-  // ============================================================
-
   console.log("📊 EXCEL IMPORT DEBUG");
   console.log("========================================");
   console.log("📊 Excel rows read:", rawRows.length);
@@ -88,10 +84,6 @@ function importExcel(filePath) {
   if (!rawRows.length) {
     return [];
   }
-
-  // ============================================================
-  // Normalize Rows
-  // ============================================================
 
   const rows = rawRows.map((row, index) => {
     const professor =
@@ -152,10 +144,6 @@ function importExcel(filePath) {
       excel_row: index + 3,
     };
   });
-
-  // ============================================================
-  // Validate Rows
-  // ============================================================
 
   const validRows = rows.filter((row) => {
     return row.crn && row.professor_name && row.date && row.period_label;
@@ -256,7 +244,6 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
   );
 
   if (!cleanRanks.length) {
-    // لا يوجد Rank معروف لهذه الفترة، القاعدة لا تنطبق
     return true;
   }
 
@@ -264,19 +251,16 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
 
   let uniqueNew = [...new Set(cleanRanks)];
 
-  // ✅ الفترات الموجودة عند المشرف مسبقًا لا تُعد فترات جديدة
   if (ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS && existingRanks?.size) {
     uniqueNew = uniqueNew.filter((rank) => !existingRanks.has(rank));
   }
 
-  // كل الفترات مكررة (نفس فترات المشرف الحالية) => مسموح
   if (!uniqueNew.length) {
     return true;
   }
 
   const sortedNew = uniqueNew.sort((a, b) => a - b);
 
-  // الفترات الجديدة نفسها يجب أن تكون متسلسلة بدون فراغ داخلي
   for (let i = 1; i < sortedNew.length; i++) {
     if (sortedNew[i] !== sortedNew[i - 1] + 1) {
       return false;
@@ -284,13 +268,11 @@ function isValidSequentialPeriodAttachment(supervisor, day, newRanks) {
   }
 
   if (!existingRanks || existingRanks.size === 0) {
-    // أول تعيين لهذا المشرف في هذا اليوم
     return true;
   }
 
   const existingMax = Math.max(...existingRanks);
 
-  // الفترات الجديدة يجب أن تبدأ مباشرة بعد آخر فترة موجودة
   return sortedNew[0] === existingMax + 1;
 }
 
@@ -432,27 +414,20 @@ function attachGroupToSupervisor(supervisor, group, result) {
 
     crn: group.crn,
 
-    // ✅ اسم المقرر
     course_name: group.course_name ?? "",
 
-    // ✅ الأستاذ
     professor: group.professor_name || group.professor || "",
     professor_id: group.professor_id ?? null,
 
-    // ✅ رقم القاعة
     room_number: group.room_number ?? null,
 
-    // ✅ التاريخ
     date: dateISO(group.date),
 
-    // ✅ الفترة
     period: normalizePeriod(group.period_label),
 
-    // ✅ وقت البداية والنهاية
     time_from: group.time_from ?? "",
     time_to: group.time_to ?? "",
 
-    // ✅ المشرف
     supervisor_id: id,
   });
 
@@ -642,11 +617,6 @@ function canSupervisorTakeProfessor(
       }
     }
   }
-
-  // --------------------------------------------------------
-  // Sequential Period Attachment Rule (Hard Rule)
-  // تُتجاهل فقط في وضع Relaxed (ملاذ أخير لضمان تغطية كل الأساتذة)
-  // --------------------------------------------------------
 
   if (!relaxed) {
     const newRanksByDay = new Map();
@@ -1511,9 +1481,6 @@ function rebalanceAssignments({
 
   console.log("📊 Before rebalance:", metrics);
 
-  // ملاحظة: تم رفع عامل التكرار (من 2 إلى 4) لإعطاء محرك التوازن
-  // مساحة أكبر للتقارب نحو أقل فرق ممكن بين المشرفين، خصوصًا في
-  // الخطط الكبيرة (عدد أساتذة/مشرفين مرتفع).
   const maxIterations = Math.max(
     20,
     professorGroups.length * selectedSupervisorIds.length * 4,
@@ -1871,8 +1838,6 @@ function minimumRebalanceAssignments({
   console.log("🎯 Minimum target:", minimumTarget);
   console.log("📊 BEFORE Minimum Rebalance:", metrics);
 
-  // ملاحظة: تم رفع عامل التكرار (من 3 إلى 5) لضمان قدرة المحرك
-  // على الوصول للحد الأدنى لكل المشرفين مع الحفاظ على العدالة.
   const maxIterations = Math.max(
     20,
     professorGroups.length * selectedSupervisorIds.length * 5,
@@ -2365,14 +2330,237 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
 }
 
 // ============================================================
-// RELAXED FALLBACK ASSIGNMENT (LAST RESORT - LEVEL 1)
+// EXCLUSIVE SUPERVISOR ASSIGNMENT (دبلوم / مدمج)
 // ============================================================
-//
-// يتجاهل القواعد المرنة فقط:
-//   - تسلسل الفترات
-//   - منع الأيام المتتالية
-//
-// لكنه ما زال يشترط أن يأخذ مشرف واحد الأستاذ كاملًا.
+function assignExclusiveSupervisorsPerProfessor({
+  professorGroups,
+  selectedSupervisorIds,
+  cand,
+  result,
+  bundleAssignments,
+  professorAssignments,
+  forcedProfessorAssignments,
+  conflicts,
+  twoProfessorsPerSupervisorEnabled,
+  variant,
+}) {
+  console.log("========================================");
+  console.log("👤 STARTING EXCLUSIVE SUPERVISOR ASSIGNMENT");
+  console.log(
+    "👤 twoProfessorsPerSupervisorEnabled:",
+    twoProfessorsPerSupervisorEnabled,
+  );
+  console.log("========================================");
+
+  const exclusiveSplitProfessorKeys = new Set();
+
+  // 1) الدكاترة المُلزَمون (Lock/Preassignment/Affinity) أولًا
+  const remainingProfessors = [];
+
+  for (const professor of professorGroups) {
+    const forced = forcedProfessorAssignments.get(professor.key);
+
+    if (!forced) {
+      remainingProfessors.push(professor);
+      continue;
+    }
+
+    const supervisor = cand[Number(forced.supervisorId)];
+
+    if (!supervisor) {
+      conflicts.push({
+        type: "SUPERVISOR_NOT_FOUND",
+        professor: professor.professor,
+        supervisor_id: forced.supervisorId,
+      });
+      continue;
+    }
+
+    for (const bundle of professor.bundles) {
+      assignSingleBundleToTeam(bundle, [supervisor], 0, {
+        result,
+        professor,
+        bundleAssignments,
+      });
+    }
+
+    professorAssignments.set(professor.key, forced.supervisorId);
+  }
+
+  // 2) ترتيب الدكاترة (الأكبر عبئًا أولًا)
+  remainingProfessors.sort((a, b) => b.bundles.length - a.bundles.length);
+
+  const numProfessors = remainingProfessors.length;
+  const numSupervisors = selectedSupervisorIds.length;
+
+  // الوضع الطبيعي = مشرف واحد لكل دكتور
+  // عند التفعيل = مشرفان بالضبط لكل دكتور
+  const baseTeamSize = twoProfessorsPerSupervisorEnabled ? 2 : 1;
+
+  const totalNeeded = numProfessors * baseTeamSize;
+  let surplus = Math.max(0, numSupervisors - totalNeeded);
+
+  // 3) حوض المشرفين (ترتيب ثابت وقابل لإعادة الإنتاج حسب variant)
+  const supervisorPool = [...selectedSupervisorIds].sort(
+    (a, b) =>
+      seededShuffle(`${variant}-${a}`) - seededShuffle(`${variant}-${b}`),
+  );
+
+  let poolIndex = 0;
+
+  function takeSupervisor() {
+    if (!supervisorPool.length) return null;
+    const id = supervisorPool[poolIndex % supervisorPool.length];
+    poolIndex++;
+    return cand[Number(id)] || null;
+  }
+
+  // 4) بناء فريق لكل دكتور
+  const teams = new Map();
+
+  for (const professor of remainingProfessors) {
+    let teamSize = baseTeamSize;
+
+    // فائض المشرفين يُعطى دكتورًا إضافيًا في كل مرة، بالتناوب على
+    // الدكاترة (الأكبر عبئًا أولًا لأننا رتّبناهم فوق)
+    if (surplus > 0) {
+      teamSize += 1;
+      surplus -= 1;
+    }
+
+    const team = [];
+
+    for (let i = 0; i < teamSize; i++) {
+      const supervisor = takeSupervisor();
+      if (supervisor) team.push(supervisor);
+    }
+
+    if (!team.length) {
+      conflicts.push({
+        type: "NO_SUPERVISOR_AVAILABLE_EXCLUSIVE_MODE",
+        professor: professor.professor,
+        professor_id: professor.professor_id,
+        message:
+          "لا يوجد مشرفون كافون لتغطية هذا الدكتور في وضع التوزيع الحصري.",
+      });
+      continue;
+    }
+
+    if (team.length > 1) {
+      exclusiveSplitProfessorKeys.add(professor.key);
+    }
+
+    teams.set(professor.key, team);
+  }
+
+  // 5) توزيع فترات كل دكتور بالتناوب على فريقه فقط
+  for (const professor of remainingProfessors) {
+    const team = teams.get(professor.key);
+    if (!team || !team.length) continue;
+
+    const sortedBundles = [...professor.bundles].sort((a, b) => {
+      const dateCompare = String(a.date).localeCompare(String(b.date));
+      if (dateCompare !== 0) return dateCompare;
+      return sortPeriods(a.period, b.period);
+    });
+
+    let teamCursor = 0;
+    let assignedAny = false;
+
+    for (const bundle of sortedBundles) {
+      let placed = false;
+
+      for (let attempt = 0; attempt < team.length; attempt++) {
+        const idx = (teamCursor + attempt) % team.length;
+        const candidateSupervisor = team[idx];
+
+        const representative = bundle.groups?.[0];
+        const day = dateISO(representative.date);
+        const period = normalizePeriod(representative.period_label);
+
+        if (canSingleBundleFitSupervisor(candidateSupervisor, day, period)) {
+          assignSingleBundleToTeam(bundle, team, idx, {
+            result,
+            professor,
+            bundleAssignments,
+          });
+
+          teamCursor = (idx + 1) % team.length;
+          placed = true;
+          assignedAny = true;
+          break;
+        }
+      }
+
+      if (!placed) {
+        conflicts.push({
+          type: "EXCLUSIVE_TEAM_SLOT_CONFLICT",
+          professor: professor.professor,
+          professor_id: professor.professor_id,
+          date: dateISO(bundle.groups?.[0]?.date),
+          period: normalizePeriod(bundle.groups?.[0]?.period_label),
+          message: "جميع أعضاء فريق هذا الدكتور مشغولون فعليًا في هذه الفترة.",
+        });
+      }
+    }
+
+    if (assignedAny) {
+      professorAssignments.set(professor.key, team[0].id);
+    }
+  }
+
+  return { teams, exclusiveSplitProfessorKeys };
+}
+
+// مساعد: ينفّذ تعيين Bundle واحد لمشرف من الفريق
+function assignSingleBundleToTeam(
+  bundle,
+  team,
+  teamIndex,
+  { result, professor, bundleAssignments },
+) {
+  const supervisor = team[teamIndex];
+  if (!supervisor) return false;
+
+  let attached = 0;
+
+  for (const group of bundle.groups || []) {
+    if (attachGroupToSupervisor(supervisor, group, result)) {
+      attached++;
+    }
+  }
+
+  if (!attached) return false;
+
+  const representative = bundle.groups?.[0];
+  const day = dateISO(representative.date);
+  const period = normalizePeriod(representative.period_label);
+  const rank = getPeriodRank(period);
+
+  if (!supervisor.byDay[day]) supervisor.byDay[day] = 0;
+  supervisor.byDay[day] += 1;
+  supervisor.total += 1;
+  supervisor.lastDay = day;
+
+  if (!supervisor.byDayPeriods[day]) supervisor.byDayPeriods[day] = new Set();
+  supervisor.byDayPeriods[day].add(period);
+
+  if (!supervisor.byDayPeriodRanks[day])
+    supervisor.byDayPeriodRanks[day] = new Set();
+  if (rank !== null && rank !== undefined) {
+    supervisor.byDayPeriodRanks[day].add(rank);
+  }
+
+  supervisor.occupiedSlots.add(getSupervisorSlotKey(day, period));
+  supervisor.assignedProfessors.add(professor.key);
+
+  bundleAssignments.set(bundle.key, supervisor.id);
+
+  return true;
+}
+
+// ============================================================
+// RELAXED FALLBACK ASSIGNMENT (LAST RESORT - LEVEL 1)
 // ============================================================
 
 function assignRemainingProfessorsRelaxed({
@@ -2436,7 +2624,6 @@ function assignRemainingProfessorsRelaxed({
     }
 
     if (!ranked.length) {
-      // سيتم التعامل معه في مرحلة التغطية الإجبارية (Level 2)
       continue;
     }
 
@@ -2502,17 +2689,6 @@ function assignRemainingProfessorsRelaxed({
 
 // ============================================================
 // FORCE FULL COVERAGE (MANDATORY - LAST RESORT LEVEL 2)
-// ============================================================
-//
-// الهدف:
-// لا يُترك أي أستاذ بدون توزيع إطلاقًا.
-//
-// هنا نوزّع كل Bundle متبقٍ بشكل فردي، ويُسمح بتقسيم
-// الأستاذ الواحد على أكثر من مشرف.
-//
-// القاعدة الوحيدة المتبقية هنا هي القاعدة الفيزيائية:
-// المشرف لا يمكن أن يكون في نفس اليوم/الفترة مرتين
-// (إلا إذا كان ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS مفعّلًا).
 // ============================================================
 
 function forceAssignAllRemainingBundles({
@@ -2920,8 +3096,6 @@ function minimumSplitFallback({
 
   rebuild();
 
-  // ملاحظة: رفعنا الحد الأدنى والمضاعف (20 → 40، ×2 → ×4) لإعطاء
-  // محرك التقسيم مساحة كافية للوصول لأقرب توزيع عادل ممكن.
   const maxIterations = Math.max(40, bundles.length * 4);
 
   let iterations = 0;
@@ -3083,18 +3257,6 @@ function minimumSplitFallback({
 // ============================================================
 // FINAL FAIRNESS SPLIT (BUNDLE-LEVEL, UNCONDITIONAL)
 // ============================================================
-//
-// الهدف: تقليل الفرق بين أعلى وأقل مشرف حملاً إلى 0 أو 1 قدر
-// الإمكان، حتى لو كانت قاعدة "الحد الأدنى" غير مفعّلة، وحتى لو
-// كانت هناك دكاترة موزّعين مسبقًا عبر Relaxed/Forced Coverage
-// خارج نطاق professorAssignments.
-//
-// يعمل على مستوى "محاضرة واحدة" (Bundle) وليس الدكتور كاملاً،
-// وينقل من المشرف الأكثر حملاً إلى الأقل حملاً، بشرط:
-// - عدم لمس الدكاترة الملزمين (Forced: Lock/Preassignment/Affinity)
-// - عدم كسر القيد الفيزيائي للـ Slot (عبر canSingleBundleFitSupervisor)
-// - عدم النزول بالمشرف المانح تحت الحد الأدنى إذا كان مفعّلاً
-// ============================================================
 
 function finalFairnessSplit({
   cand,
@@ -3134,9 +3296,6 @@ function finalFairnessSplit({
 
   rebuild();
 
-  // ملاحظة: رفعنا الحد الأدنى والمضاعف (30 → 60، ×2 → ×4) لضمان
-  // أن الجولة الأخيرة للعدالة تصل فعليًا إلى أقل فرق ممكن (0 أو 1)
-  // بين المشرفين قبل التوقف، خصوصًا في الخطط الكبيرة.
   const maxIterations = Math.max(60, bundles.length * 4);
 
   let iterations = 0;
@@ -3164,12 +3323,10 @@ function finalFairnessSplit({
       break;
     }
 
-    // الأقل حملاً أولاً (مستقبِلون محتملون)
     const targets = [...supervisorsList].sort(
       (a, b) => Number(a.total || 0) - Number(b.total || 0),
     );
 
-    // الأكثر حملاً أولاً (مانحون محتملون)
     const donors = [...supervisorsList].sort(
       (a, b) => Number(b.total || 0) - Number(a.total || 0),
     );
@@ -3184,10 +3341,8 @@ function finalFairnessSplit({
 
         const donorTotal = Number(donor.total || 0);
 
-        // النقل يجب أن يحسّن التوازن فعليًا
         if (donorTotal - 1 < targetTotal + 1) continue;
 
-        // احترام الحد الأدنى للمانح إذا كانت القاعدة مفعّلة
         if (minimumEnabled && donorTotal - 1 < minimumTarget) continue;
 
         const donorBundleKeys = [...bundleAssignments.entries()]
@@ -3209,10 +3364,6 @@ function finalFairnessSplit({
           const period = normalizePeriod(representative.period_label);
 
           if (!canSingleBundleFitSupervisor(target, day, period)) continue;
-
-          // ------------------------------------------------
-          // تنفيذ النقل
-          // ------------------------------------------------
 
           const groupIds = new Set(
             (bundle.groups || [])
@@ -3319,8 +3470,6 @@ function swapProfessorsBetweenSupervisors({
   let iterations = 0;
   let totalSwaps = 0;
 
-  // ملاحظة: تم رفع عامل التكرار (من 2 إلى 4) لإعطاء محرك المبادلة
-  // فرصة أكبر لإيجاد مبادلات تُحسّن العدالة بين المشرفين.
   const maxIterations = Math.max(
     20,
     professorGroups.length * selectedSupervisorIds.length * 4,
@@ -3729,6 +3878,7 @@ async function generatePlan(
   variant = 1,
   minimumPeriodsEnabled = false,
   minimumPeriods = 4,
+  twoProfessorsPerSupervisorEnabled = false,
 ) {
   if (minimumPeriodsEnabled && typeof minimumPeriodsEnabled === "object") {
     const options = minimumPeriodsEnabled;
@@ -3761,6 +3911,11 @@ async function generatePlan(
     ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS,
   );
 
+  console.log(
+    "⚙️ Two professors per supervisor enabled:",
+    twoProfessorsPerSupervisorEnabled,
+  );
+
   // ==========================================================
   // Plan Context
   // ==========================================================
@@ -3784,35 +3939,35 @@ async function generatePlan(
   // خريطة أستاذ -> قاعة
   // =====================================================
 
-const professorRoomMap = new Map();
+  const professorRoomMap = new Map();
 
-for (const item of rooms) {
-  const pid = Number(item.professor_id ?? item.professorId);
-  const roomNumber = String(item.room_number ?? item.roomNumber ?? "").trim();
-  if (!Number.isFinite(pid) || !roomNumber) continue;
+  for (const item of rooms) {
+    const pid = Number(item.professor_id ?? item.professorId);
+    const roomNumber = String(item.room_number ?? item.roomNumber ?? "").trim();
+    if (!Number.isFinite(pid) || !roomNumber) continue;
 
-  const day = dateISO(item.date ?? "");
-  const period = normalizePeriod(item.period ?? item.period_label ?? "");
+    const day = dateISO(item.date ?? "");
+    const period = normalizePeriod(item.period ?? item.period_label ?? "");
 
-  if (day && period) {
-    professorRoomMap.set(`${pid}|${day}|${period}`, roomNumber);
-  } else if (!professorRoomMap.has(`pid:${pid}`)) {
-    // توافق مع بيانات قديمة كانت تحفظ قاعة واحدة لكل دكتور بدون فترة
-    professorRoomMap.set(`pid:${pid}`, roomNumber);
+    if (day && period) {
+      professorRoomMap.set(`${pid}|${day}|${period}`, roomNumber);
+    } else if (!professorRoomMap.has(`pid:${pid}`)) {
+      professorRoomMap.set(`pid:${pid}`, roomNumber);
+    }
   }
-}
 
-for (const group of groups) {
-  const pid = Number(group.professor_id);
-  const day = dateISO(group.date);
-  const period = normalizePeriod(group.period_label);
+  for (const group of groups) {
+    const pid = Number(group.professor_id);
+    const day = dateISO(group.date);
+    const period = normalizePeriod(group.period_label);
 
-  group.room_number = Number.isFinite(pid)
-    ? (professorRoomMap.get(`${pid}|${day}|${period}`) ??
-       professorRoomMap.get(`pid:${pid}`) ??
-       null)
-    : null;
-}
+    group.room_number = Number.isFinite(pid)
+      ? (professorRoomMap.get(`${pid}|${day}|${period}`) ??
+         professorRoomMap.get(`pid:${pid}`) ??
+         null)
+      : null;
+  }
+
   console.log("📦 Groups from getPlanContext:", groups.length);
 
   // ==========================================================
@@ -4280,63 +4435,102 @@ for (const group of groups) {
   }
 
   // ==========================================================
-  // Single-Professor-Day Split (Equal Distribution)
+  // فرع الفئة: متطلبات (المسار العادل الكامل)
+  // مقابل: دبلوم / مدمج (التوزيع الحصري)
   // ==========================================================
+
+  const planCategory = ctx?.plan?.category ?? "";
+
+  const isExclusiveSupervisorCategory =
+    planCategory === "دبلوم" || planCategory === "مدمج";
+
+  // النتائج المشتركة (تُستخدم لاحقًا في الإحصائيات وتصدير الإكسل
+  // بغض النظر عن الفئة)
+  let relaxedFallbackResult = { assigned: 0, stillUnassigned: 0, details: [] };
+  let forcedCoverageResult = { assignedBundles: 0, details: [] };
+  let rebalanceResult = { moves: 0, totalMoves: 0, iterations: 0 };
+  let minimumRebalanceResult = { moves: 0, iterations: 0, remainingDeficit: [] };
+  let swapRebalanceResult = { totalSwaps: 0, iterations: 0 };
+  let minimumSplitResult = {
+    moves: 0,
+    details: [],
+    splitProfessorKeys: new Set(),
+    remainingDeficit: [],
+  };
+  let finalFairnessResult = { moves: 0, details: [] };
 
   const singleDaySplitProfessorKeys = new Set();
+  const finalFairnessSplitProfessorKeys = new Set();
+  const exclusiveSplitProfessorKeys = new Set();
 
-  const singleDaySplitResult = distributeSingleProfessorDays({
-    professorGroups,
-    forcedProfessorAssignments,
-    selectedSupervisorIds,
-    cand,
-    result,
-    bundleAssignments,
-    conflicts,
-    splitProfessorKeys: singleDaySplitProfessorKeys,
-    variant,
-  });
+  if (isExclusiveSupervisorCategory) {
+    // ================= دبلوم / مدمج =================
 
-  console.log("📆 Single-Professor-Day Split result:", singleDaySplitResult);
-
-  // ==========================================================
-  // Forced Professors FIRST
-  // ==========================================================
-
-  for (const professor of professorGroups) {
-    const forced = forcedProfessorAssignments.get(professor.key);
-
-    if (!forced) {
-      continue;
-    }
-
-    const supervisor = cand[Number(forced.supervisorId)];
-
-    if (!supervisor) {
-      conflicts.push({
-        type: "SUPERVISOR_NOT_FOUND",
-
-        professor: professor.professor,
-
-        supervisor_id: forced.supervisorId,
-      });
-
-      continue;
-    }
-
-    let ok = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      forced.supervisorId,
-      result,
+    const exclusiveResult = assignExclusiveSupervisorsPerProfessor({
+      professorGroups,
+      selectedSupervisorIds,
       cand,
+      result,
       bundleAssignments,
       professorAssignments,
-    );
+      forcedProfessorAssignments,
+      conflicts,
+      twoProfessorsPerSupervisorEnabled,
+      variant,
+    });
 
-    // محاولة ثانية بوضع Relaxed حتى لا يضيع الإلزام
-    if (!ok) {
-      ok = assignProfessorToSupervisor(
+    console.log("👤 Exclusive Supervisor Assignment result:", exclusiveResult);
+
+    for (const key of exclusiveResult.exclusiveSplitProfessorKeys) {
+      exclusiveSplitProfessorKeys.add(key);
+    }
+  } else {
+    // ================= متطلبات =================
+
+    // ----------------------------------------------------------
+    // Single-Professor-Day Split (Equal Distribution)
+    // ----------------------------------------------------------
+
+    const singleDaySplitResult = distributeSingleProfessorDays({
+      professorGroups,
+      forcedProfessorAssignments,
+      selectedSupervisorIds,
+      cand,
+      result,
+      bundleAssignments,
+      conflicts,
+      splitProfessorKeys: singleDaySplitProfessorKeys,
+      variant,
+    });
+
+    console.log("📆 Single-Professor-Day Split result:", singleDaySplitResult);
+
+    // ----------------------------------------------------------
+    // Forced Professors FIRST
+    // ----------------------------------------------------------
+
+    for (const professor of professorGroups) {
+      const forced = forcedProfessorAssignments.get(professor.key);
+
+      if (!forced) {
+        continue;
+      }
+
+      const supervisor = cand[Number(forced.supervisorId)];
+
+      if (!supervisor) {
+        conflicts.push({
+          type: "SUPERVISOR_NOT_FOUND",
+
+          professor: professor.professor,
+
+          supervisor_id: forced.supervisorId,
+        });
+
+        continue;
+      }
+
+      let ok = assignProfessorToSupervisor(
         professor.key,
         professor.bundles,
         forced.supervisorId,
@@ -4344,391 +4538,401 @@ for (const group of groups) {
         cand,
         bundleAssignments,
         professorAssignments,
-        { relaxed: true },
       );
+
+      if (!ok) {
+        ok = assignProfessorToSupervisor(
+          professor.key,
+          professor.bundles,
+          forced.supervisorId,
+          result,
+          cand,
+          bundleAssignments,
+          professorAssignments,
+          { relaxed: true },
+        );
+      }
+
+      if (!ok) {
+        conflicts.push({
+          type: "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
+
+          professor: professor.professor,
+
+          professor_id: professor.professor_id,
+
+          supervisor_id: forced.supervisorId,
+
+          periods: professor.bundles.length,
+
+          message:
+            "The professor cannot fit completely into the forced supervisor because of period conflicts.",
+        });
+      }
     }
 
-    if (!ok) {
-      conflicts.push({
-        type: "PROFESSOR_CANNOT_FIT_FORCED_SUPERVISOR",
+    // ----------------------------------------------------------
+    // Remaining Professors (Normal Fair Distribution)
+    // ----------------------------------------------------------
 
-        professor: professor.professor,
+    console.log("========================================");
+    console.log("⚖️ STARTING NORMAL FAIR DISTRIBUTION");
+    console.log("========================================");
 
-        professor_id: professor.professor_id,
+    for (const professor of professorGroups) {
+      if (professorAssignments.has(professor.key)) {
+        continue;
+      }
 
-        supervisor_id: forced.supervisorId,
+      const allMinimumsReached = hasReachedAllMinimums(
+        cand,
+        selectedSupervisorIds,
+        minimumEnabled,
+        minimumTarget,
+      );
 
-        periods: professor.bundles.length,
+      const ranked = [];
 
-        message:
-          "The professor cannot fit completely into the forced supervisor because of period conflicts.",
+      for (const supervisorId of selectedSupervisorIds) {
+        const supervisor = cand[supervisorId];
+
+        if (!supervisor) {
+          continue;
+        }
+
+        if (!canSupervisorTakeProfessor(supervisor, professor.bundles)) {
+          continue;
+        }
+
+        const workload = professor.bundles.length;
+
+        const currentTotal = Number(supervisor.total || 0);
+
+        const projectedTotal = currentTotal + workload;
+
+        const minimumInfo = getMinimumInfo(
+          supervisor,
+          workload,
+          minimumEnabled,
+          minimumTarget,
+        );
+
+        const consecutiveScore = getProfessorConsecutiveScore(
+          supervisor,
+          professor.bundles,
+        );
+
+        const periodContinuityScore = getPeriodContinuityScore(
+          supervisor,
+          professor.bundles,
+        );
+
+        const continuityPriority = getContinuityPriority(
+          supervisor,
+          professor.bundles,
+        );
+
+        const dailyLoad = getProfessorDailyLoad(supervisor, professor.bundles);
+
+        const professorCount = supervisor.assignedProfessors?.size || 0;
+
+        const noProfessorYet = professorCount === 0;
+
+        let score =
+          periodContinuityScore * 1000000 +
+          continuityPriority * 1000 +
+          (noProfessorYet ? 100000000 : 0) -
+          projectedTotal * 10000 -
+          dailyLoad * 2;
+
+        if (minimumEnabled && minimumInfo.needsMinimum && !allMinimumsReached) {
+          score += 1000000000 + minimumInfo.deficit * 1000000;
+
+          if (minimumInfo.reachesMinimum) {
+            score += 50000000;
+          }
+        }
+
+        ranked.push({
+          supervisor,
+
+          supervisorId,
+
+          currentTotal,
+
+          projectedTotal,
+
+          consecutiveScore,
+
+          periodContinuityScore,
+
+          continuityPriority,
+
+          dailyLoad,
+
+          professorCount,
+
+          minimumEnabled,
+
+          minimumTarget,
+
+          needsMinimum: minimumInfo.needsMinimum,
+
+          minimumDeficit: minimumInfo.deficit,
+
+          projectedMinimumDeficit: minimumInfo.projectedDeficit,
+
+          reachesMinimum: minimumInfo.reachesMinimum,
+
+          score,
+        });
+      }
+
+      if (!ranked.length) {
+        conflicts.push({
+          type: "NO_SUPERVISOR_FOR_PROFESSOR",
+
+          professor: professor.professor,
+
+          professor_id: professor.professor_id,
+
+          periods: professor.bundles.length,
+
+          message:
+            "No single supervisor can take all periods of this professor without a same-period conflict.",
+        });
+
+        console.warn(
+          "⚠️ No supervisor can take entire professor:",
+          professor.professor,
+        );
+
+        continue;
+      }
+
+      ranked.sort((a, b) => {
+        if (minimumEnabled) {
+          const aNeedsMinimum = a.currentTotal < minimumTarget;
+
+          const bNeedsMinimum = b.currentTotal < minimumTarget;
+
+          if (aNeedsMinimum !== bNeedsMinimum) {
+            return aNeedsMinimum ? -1 : 1;
+          }
+
+          if (aNeedsMinimum && bNeedsMinimum) {
+            if (a.minimumDeficit !== b.minimumDeficit) {
+              return b.minimumDeficit - a.minimumDeficit;
+            }
+
+            if (a.projectedMinimumDeficit !== b.projectedMinimumDeficit) {
+              return a.projectedMinimumDeficit - b.projectedMinimumDeficit;
+            }
+
+            if (a.reachesMinimum !== b.reachesMinimum) {
+              return a.reachesMinimum ? -1 : 1;
+            }
+          }
+        }
+
+        if (a.projectedTotal !== b.projectedTotal) {
+          return a.projectedTotal - b.projectedTotal;
+        }
+
+        if (a.periodContinuityScore !== b.periodContinuityScore) {
+          return b.periodContinuityScore - a.periodContinuityScore;
+        }
+
+        if (a.continuityPriority !== b.continuityPriority) {
+          return b.continuityPriority - a.continuityPriority;
+        }
+
+        if (a.consecutiveScore !== b.consecutiveScore) {
+          return b.consecutiveScore - a.consecutiveScore;
+        }
+
+        if (a.dailyLoad !== b.dailyLoad) {
+          return a.dailyLoad - b.dailyLoad;
+        }
+
+        if (a.professorCount !== b.professorCount) {
+          return a.professorCount - b.professorCount;
+        }
+
+        return (
+          seededShuffle(`${variant}-${a.supervisorId}`) -
+          seededShuffle(`${variant}-${b.supervisorId}`)
+        );
       });
+
+      const selected = ranked[0];
+
+      const ok = assignProfessorToSupervisor(
+        professor.key,
+        professor.bundles,
+        selected.supervisorId,
+        result,
+        cand,
+        bundleAssignments,
+        professorAssignments,
+      );
+
+      if (!ok) {
+        conflicts.push({
+          type: "PROFESSOR_ASSIGNMENT_FAILED",
+
+          professor: professor.professor,
+
+          professor_id: professor.professor_id,
+
+          supervisor_id: selected.supervisorId,
+        });
+
+        console.warn(
+          `⚠️ Failed assigning professor ${professor.professor} to supervisor ${selected.supervisorId}`,
+        );
+      }
     }
-  }
 
-  // ==========================================================
-  // Remaining Professors (Normal Fair Distribution)
-  // ==========================================================
+    // ----------------------------------------------------------
+    // RELAXED FALLBACK (LEVEL 1)
+    // ----------------------------------------------------------
 
-  console.log("========================================");
-  console.log("⚖️ STARTING NORMAL FAIR DISTRIBUTION");
-  console.log("========================================");
-
-  for (const professor of professorGroups) {
-    if (professorAssignments.has(professor.key)) {
-      continue;
-    }
-
-    const allMinimumsReached = hasReachedAllMinimums(
-      cand,
+    relaxedFallbackResult = assignRemainingProfessorsRelaxed({
+      professorGroups,
       selectedSupervisorIds,
-      minimumEnabled,
-      minimumTarget,
-    );
-
-    const ranked = [];
-
-    for (const supervisorId of selectedSupervisorIds) {
-      const supervisor = cand[supervisorId];
-
-      if (!supervisor) {
-        continue;
-      }
-
-      if (!canSupervisorTakeProfessor(supervisor, professor.bundles)) {
-        continue;
-      }
-
-      const workload = professor.bundles.length;
-
-      const currentTotal = Number(supervisor.total || 0);
-
-      const projectedTotal = currentTotal + workload;
-
-      const minimumInfo = getMinimumInfo(
-        supervisor,
-        workload,
-        minimumEnabled,
-        minimumTarget,
-      );
-
-      const consecutiveScore = getProfessorConsecutiveScore(
-        supervisor,
-        professor.bundles,
-      );
-
-      const periodContinuityScore = getPeriodContinuityScore(
-        supervisor,
-        professor.bundles,
-      );
-
-      const continuityPriority = getContinuityPriority(
-        supervisor,
-        professor.bundles,
-      );
-
-      const dailyLoad = getProfessorDailyLoad(supervisor, professor.bundles);
-
-      const professorCount = supervisor.assignedProfessors?.size || 0;
-
-      const noProfessorYet = professorCount === 0;
-
-      let score =
-        periodContinuityScore * 1000000 +
-        continuityPriority * 1000 +
-        (noProfessorYet ? 100000000 : 0) -
-        projectedTotal * 10000 -
-        dailyLoad * 2;
-
-      if (minimumEnabled && minimumInfo.needsMinimum && !allMinimumsReached) {
-        score += 1000000000 + minimumInfo.deficit * 1000000;
-
-        if (minimumInfo.reachesMinimum) {
-          score += 50000000;
-        }
-      }
-
-      ranked.push({
-        supervisor,
-
-        supervisorId,
-
-        currentTotal,
-
-        projectedTotal,
-
-        consecutiveScore,
-
-        periodContinuityScore,
-
-        continuityPriority,
-
-        dailyLoad,
-
-        professorCount,
-
-        minimumEnabled,
-
-        minimumTarget,
-
-        needsMinimum: minimumInfo.needsMinimum,
-
-        minimumDeficit: minimumInfo.deficit,
-
-        projectedMinimumDeficit: minimumInfo.projectedDeficit,
-
-        reachesMinimum: minimumInfo.reachesMinimum,
-
-        score,
-      });
-    }
-
-    if (!ranked.length) {
-      conflicts.push({
-        type: "NO_SUPERVISOR_FOR_PROFESSOR",
-
-        professor: professor.professor,
-
-        professor_id: professor.professor_id,
-
-        periods: professor.bundles.length,
-
-        message:
-          "No single supervisor can take all periods of this professor without a same-period conflict.",
-      });
-
-      console.warn(
-        "⚠️ No supervisor can take entire professor:",
-        professor.professor,
-      );
-
-      continue;
-    }
-
-    ranked.sort((a, b) => {
-      if (minimumEnabled) {
-        const aNeedsMinimum = a.currentTotal < minimumTarget;
-
-        const bNeedsMinimum = b.currentTotal < minimumTarget;
-
-        if (aNeedsMinimum !== bNeedsMinimum) {
-          return aNeedsMinimum ? -1 : 1;
-        }
-
-        if (aNeedsMinimum && bNeedsMinimum) {
-          if (a.minimumDeficit !== b.minimumDeficit) {
-            return b.minimumDeficit - a.minimumDeficit;
-          }
-
-          if (a.projectedMinimumDeficit !== b.projectedMinimumDeficit) {
-            return a.projectedMinimumDeficit - b.projectedMinimumDeficit;
-          }
-
-          if (a.reachesMinimum !== b.reachesMinimum) {
-            return a.reachesMinimum ? -1 : 1;
-          }
-        }
-      }
-
-      if (a.projectedTotal !== b.projectedTotal) {
-        return a.projectedTotal - b.projectedTotal;
-      }
-
-      if (a.periodContinuityScore !== b.periodContinuityScore) {
-        return b.periodContinuityScore - a.periodContinuityScore;
-      }
-
-      if (a.continuityPriority !== b.continuityPriority) {
-        return b.continuityPriority - a.continuityPriority;
-      }
-
-      if (a.consecutiveScore !== b.consecutiveScore) {
-        return b.consecutiveScore - a.consecutiveScore;
-      }
-
-      if (a.dailyLoad !== b.dailyLoad) {
-        return a.dailyLoad - b.dailyLoad;
-      }
-
-      if (a.professorCount !== b.professorCount) {
-        return a.professorCount - b.professorCount;
-      }
-
-      return (
-        seededShuffle(`${variant}-${a.supervisorId}`) -
-        seededShuffle(`${variant}-${b.supervisorId}`)
-      );
-    });
-
-    const selected = ranked[0];
-
-    const ok = assignProfessorToSupervisor(
-      professor.key,
-      professor.bundles,
-      selected.supervisorId,
-      result,
       cand,
+      result,
       bundleAssignments,
       professorAssignments,
+      forcedProfessorAssignments,
+      conflicts,
+      variant,
+    });
+
+    console.log("🆘 Relaxed Fallback result:", relaxedFallbackResult);
+
+    // ----------------------------------------------------------
+    // FORCED FULL COVERAGE (LEVEL 2) — التوزيع الإجباري
+    // ----------------------------------------------------------
+
+    forcedCoverageResult = forceAssignAllRemainingBundles({
+      professorGroups,
+      selectedSupervisorIds,
+      cand,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      conflicts,
+      splitProfessorKeys: singleDaySplitProfessorKeys,
+    });
+
+    console.log("🚨 Forced Coverage result:", forcedCoverageResult);
+
+    // ----------------------------------------------------------
+    // Rebalance Engine
+    // ----------------------------------------------------------
+
+    rebalanceResult = rebalanceAssignments({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
+
+    console.log("🔄 Rebalance result:", rebalanceResult);
+
+    // ----------------------------------------------------------
+    // Minimum Rebalance Engine
+    // ----------------------------------------------------------
+
+    minimumRebalanceResult = minimumRebalanceAssignments({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
+
+    console.log("🎯 Minimum Rebalance result:", minimumRebalanceResult);
+
+    // ----------------------------------------------------------
+    // Swap Rebalance Engine
+    // ----------------------------------------------------------
+
+    swapRebalanceResult = swapProfessorsBetweenSupervisors({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      variant,
+    });
+
+    console.log("🔄 Swap Rebalance result:", swapRebalanceResult);
+
+    // ----------------------------------------------------------
+    // Minimum Split Fallback Engine (last resort)
+    // ----------------------------------------------------------
+
+    const bundleMapForSplit = new Map(
+      bundles.map((bundle) => [bundle.key, bundle]),
     );
 
-    if (!ok) {
-      conflicts.push({
-        type: "PROFESSOR_ASSIGNMENT_FAILED",
+    minimumSplitResult = minimumSplitFallback({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      bundleMap: bundleMapForSplit,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+    });
 
-        professor: professor.professor,
+    console.log("🧩 Minimum Split Fallback result:", minimumSplitResult);
 
-        professor_id: professor.professor_id,
+    finalFairnessResult = finalFairnessSplit({
+      cand,
+      selectedSupervisorIds,
+      professorGroups,
+      bundles,
+      bundleMap: bundleMapForSplit,
+      result,
+      bundleAssignments,
+      professorAssignments,
+      forcedProfessorAssignments,
+      minimumEnabled,
+      minimumTarget,
+      splitProfessorKeys: finalFairnessSplitProfessorKeys,
+    });
 
-        supervisor_id: selected.supervisorId,
-      });
-
-      console.warn(
-        `⚠️ Failed assigning professor ${professor.professor} to supervisor ${selected.supervisorId}`,
-      );
-    }
+    console.log("⚖️ Final Fairness Split result:", finalFairnessResult);
   }
 
   // ==========================================================
-  // RELAXED FALLBACK (LEVEL 1)
-  // ==========================================================
-
-  const relaxedFallbackResult = assignRemainingProfessorsRelaxed({
-    professorGroups,
-    selectedSupervisorIds,
-    cand,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    conflicts,
-    variant,
-  });
-
-  console.log("🆘 Relaxed Fallback result:", relaxedFallbackResult);
-
-  // ==========================================================
-  // FORCED FULL COVERAGE (LEVEL 2) — التوزيع الإجباري
-  // ==========================================================
-
-  const forcedCoverageResult = forceAssignAllRemainingBundles({
-    professorGroups,
-    selectedSupervisorIds,
-    cand,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    conflicts,
-    splitProfessorKeys: singleDaySplitProfessorKeys,
-  });
-
-  console.log("🚨 Forced Coverage result:", forcedCoverageResult);
-
-  // ==========================================================
-  // Rebalance Engine
-  // ==========================================================
-
-  const rebalanceResult = rebalanceAssignments({
-    cand,
-    selectedSupervisorIds,
-    professorGroups,
-    bundles,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    minimumEnabled,
-    minimumTarget,
-    variant,
-  });
-
-  console.log("🔄 Rebalance result:", rebalanceResult);
-
-  // ==========================================================
-  // Minimum Rebalance Engine
-  // ==========================================================
-
-  const minimumRebalanceResult = minimumRebalanceAssignments({
-    cand,
-    selectedSupervisorIds,
-    professorGroups,
-    bundles,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    minimumEnabled,
-    minimumTarget,
-    variant,
-  });
-
-  console.log("🎯 Minimum Rebalance result:", minimumRebalanceResult);
-
-  // ==========================================================
-  // Swap Rebalance Engine
-  // ==========================================================
-
-  const swapRebalanceResult = swapProfessorsBetweenSupervisors({
-    cand,
-    selectedSupervisorIds,
-    professorGroups,
-    bundles,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    minimumEnabled,
-    minimumTarget,
-    variant,
-  });
-
-  console.log("🔄 Swap Rebalance result:", swapRebalanceResult);
-
-  // ==========================================================
-  // Minimum Split Fallback Engine (last resort)
-  // ==========================================================
-
-  const bundleMapForSplit = new Map(
-    bundles.map((bundle) => [bundle.key, bundle]),
-  );
-
-  const minimumSplitResult = minimumSplitFallback({
-    cand,
-    selectedSupervisorIds,
-    professorGroups,
-    bundles,
-    bundleMap: bundleMapForSplit,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    minimumEnabled,
-    minimumTarget,
-  });
-
-  console.log("🧩 Minimum Split Fallback result:", minimumSplitResult);
-
-  const finalFairnessSplitProfessorKeys = new Set();
-
-  const finalFairnessResult = finalFairnessSplit({
-    cand,
-    selectedSupervisorIds,
-    professorGroups,
-    bundles,
-    bundleMap: bundleMapForSplit,
-    result,
-    bundleAssignments,
-    professorAssignments,
-    forcedProfessorAssignments,
-    minimumEnabled,
-    minimumTarget,
-    splitProfessorKeys: finalFairnessSplitProfessorKeys,
-  });
-
-  console.log("⚖️ Final Fairness Split result:", finalFairnessResult);
-
-  // ==========================================================
-  // FINAL CONSISTENCY REBUILD
+  // FINAL CONSISTENCY REBUILD (مشترك بين الفرعين)
   // ==========================================================
 
   rebuildCandidateState(
@@ -4836,11 +5040,12 @@ for (const group of groups) {
   for (const [professorKey, supervisorId] of professorSupervisorCheck) {
     const assigned = professorAssignments.get(professorKey);
 
-        if (supervisorId === "MULTIPLE") {
+    if (supervisorId === "MULTIPLE") {
       if (
         minimumSplitResult.splitProfessorKeys.has(professorKey) ||
         singleDaySplitProfessorKeys.has(professorKey) ||
-        finalFairnessSplitProfessorKeys.has(professorKey)
+        finalFairnessSplitProfessorKeys.has(professorKey) ||
+        exclusiveSplitProfessorKeys.has(professorKey)
       ) {
         intentionalMinimumSplits++;
         continue;
@@ -4919,7 +5124,7 @@ for (const group of groups) {
       "Course Name": row.course_name ?? "",
       CRN: row.crn ?? "",
       Professor: row.professor ?? row.professor_name ?? "",
-          Room: row.room_number ?? "",
+      Room: row.room_number ?? "",
 
       Date: row.date ?? "",
       "Time From": row.time_from ?? "",
@@ -5019,8 +5224,6 @@ for (const group of groups) {
 
   // ==========================================================
   // Relaxed Assignments Sheet
-  // (✅ نُقلت إلى هنا بعد إنشاء workbook — كانت تسبب
-  //  ReferenceError وتوقف توليد الخطة بالكامل)
   // ==========================================================
 
   if (relaxedFallbackResult.details.length) {
@@ -5112,7 +5315,7 @@ for (const group of groups) {
     );
   }
 
-    if (finalFairnessResult?.details?.length) {
+  if (finalFairnessResult?.details?.length) {
     const fairnessRows = finalFairnessResult.details.map((item) => {
       const fromSupervisor = supervisors.find(
         (s) => Number(s.id) === Number(item.from_supervisor_id),
@@ -5141,6 +5344,7 @@ for (const group of groups) {
       "Final Fairness Split",
     );
   }
+
   // ==========================================================
   // Export Path
   // ==========================================================
@@ -5238,6 +5442,12 @@ for (const group of groups) {
     selectedSupervisors: selectedSupervisorIds,
 
     assignments: result,
+
+    distributionMode: isExclusiveSupervisorCategory
+      ? twoProfessorsPerSupervisorEnabled
+        ? "exclusive-pair"
+        : "exclusive-single"
+      : "fair-balanced",
   };
 }
 

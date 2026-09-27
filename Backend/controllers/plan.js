@@ -302,6 +302,7 @@ async function generate(req, res) {
       variant = 1,
       minimumPeriodsEnabled = false,
       minimumPeriods = 4,
+      twoProfessorsPerSupervisorEnabled  = false
     } = req.body || {};
 
     if (!planId) {
@@ -361,6 +362,8 @@ async function generate(req, res) {
         parsedVariant,
         parsedMinimumEnabled,
         parsedMinimumPeriods,
+          twoProfessorsPerSupervisorEnabled , 
+
       );
 
     console.log(
