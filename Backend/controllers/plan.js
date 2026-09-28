@@ -766,45 +766,33 @@ async function deletePlan(req, res) {
 // =====================================================
 // Accepted Plans Supervisor Statistics
 // =====================================================
-async function getAcceptedSupervisorStatsSvc() {
-  const { rows } = await pool.query(`
-    WITH per_plan AS (
-      SELECT
-        a.supervisor_id,
-        a.plan_id,
-        p.date_from,
-        p.date_to,
-        COUNT(DISTINCT (sg.date, sg.period_label)) AS periods,
-        COUNT(a.id) AS assignments
-      FROM assignments a
-      JOIN plans p ON p.id = a.plan_id
-      JOIN session_groups sg ON sg.id = a.session_group_id
-      WHERE p.status = 'accepted'
-      GROUP BY a.supervisor_id, a.plan_id, p.date_from, p.date_to
-    )
-    SELECT
-      s.id   AS supervisor_id,
-      s.name AS supervisor_name,
-      SUM(pp.periods)::int     AS total_periods,
-      SUM(pp.assignments)::int AS total_assignments,
-      COUNT(*)::int            AS accepted_plans,
-      json_agg(
-        json_build_object(
-          'plan_id',     pp.plan_id,
-          'date_from',   pp.date_from,
-          'date_to',     pp.date_to,
-          'periods',     pp.periods,
-          'assignments', pp.assignments
-        )
-        ORDER BY pp.date_from
-      ) AS plans
-    FROM per_plan pp
-    JOIN supervisors s ON s.id = pp.supervisor_id
-    GROUP BY s.id, s.name
-    ORDER BY total_periods DESC, s.name
-  `);
 
-  return rows;
+async function getAcceptedSupervisorStats(req, res) {
+  try {
+    const stats = await getAcceptedSupervisorStatsSvc();
+
+    return res.json({
+      success: true,
+      data: stats,
+    });
+
+  } catch (error) {
+    console.error("====================================");
+    console.error("GET ACCEPTED SUPERVISOR STATS ERROR");
+    console.error("message:", error.message);
+    console.error("code:", error.code);
+    console.error("detail:", error.detail);
+    console.error("hint:", error.hint);
+    console.error("where:", error.where);
+    console.error("stack:", error.stack);
+    console.error("====================================");
+
+    return res.status(500).json({
+      success: false,
+      error: "تعذر تحميل إحصائيات المشرفين.",
+      debug: error.message,
+    });
+  }
 }
 
 // =====================================================

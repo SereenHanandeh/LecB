@@ -1208,54 +1208,44 @@ async function deletePlanSvc(planId) {
 // =====================================================
 
 async function getAcceptedSupervisorStatsSvc() {
-  const result = await pool.query(`
+  const { rows } = await pool.query(`
+    WITH per_plan AS (
+      SELECT
+        a.supervisor_id,
+        a.plan_id,
+        p.date_from,
+        p.date_to,
+        COUNT(DISTINCT (sg.date, sg.period_label)) AS periods,
+        COUNT(a.id) AS assignments
+      FROM assignments a
+      JOIN plans p ON p.id = a.plan_id
+      JOIN session_groups sg ON sg.id = a.session_group_id
+      WHERE p.status = 'accepted'
+      GROUP BY a.supervisor_id, a.plan_id, p.date_from, p.date_to
+    )
     SELECT
-      s.id AS supervisor_id,
+      s.id   AS supervisor_id,
       s.name AS supervisor_name,
-
-      COUNT(
-        DISTINCT CASE
-          WHEN p.id IS NOT NULL THEN
-            a.plan_id::text
-            || '|'
-            || g.date::text
-            || '|'
-            || g.period_label::text
-        END
-      ) AS total_periods,
-
-      COUNT(
-        CASE
-          WHEN p.id IS NOT NULL THEN a.id
-        END
-      ) AS total_assignments,
-
-      COUNT(
-        DISTINCT CASE
-          WHEN p.id IS NOT NULL THEN a.plan_id
-        END
-      ) AS accepted_plans
-
-    FROM supervisors s
-
-    LEFT JOIN assignments a
-      ON a.supervisor_id = s.id
-
-    LEFT JOIN plans p
-      ON p.id = a.plan_id
-      AND p.status = 'accepted'
-
-    LEFT JOIN session_groups g
-      ON g.id = a.session_group_id
-
-    WHERE s.active = TRUE
-
+      SUM(pp.periods)::int     AS total_periods,
+      SUM(pp.assignments)::int AS total_assignments,
+      COUNT(*)::int            AS accepted_plans,
+      json_agg(
+        json_build_object(
+          'plan_id',     pp.plan_id,
+          'date_from',   pp.date_from,
+          'date_to',     pp.date_to,
+          'periods',     pp.periods,
+          'assignments', pp.assignments
+        )
+        ORDER BY pp.date_from
+      ) AS plans
+    FROM per_plan pp
+    JOIN supervisors s ON s.id = pp.supervisor_id
     GROUP BY s.id, s.name
-
-    ORDER BY total_periods DESC, s.name ASC
+    ORDER BY total_periods DESC, s.name
   `);
 
-  return result.rows;
+  return rows;
 }
 
 module.exports = {
