@@ -2565,17 +2565,40 @@ function assignExclusiveSupervisorsPerProfessor({
   // ---------------------------------------------------------
   // 4) شبكة أمان: أي محاضرة متبقية تُعيَّن حتمًا
   // ---------------------------------------------------------
-  for (const professor of professorGroups) {
-    for (const bundle of professor.bundles) {
-      if (bundleAssignments.has(bundle.key)) continue;
+// 4) شبكة أمان نهائية
+for (const professor of professorGroups) {
+  for (const bundle of professor.bundles) {
+    if (bundleAssignments.has(bundle.key)) continue;
 
-      const chosen = placeBundle(bundle, professor, null, []);
+    const placed = placeBundle(bundle, professor, null, []);
 
-      if (chosen) exclusiveSplitProfessorKeys.add(professor.key);
+    if (placed) {
+      exclusiveSplitProfessorKeys.add(professor.key);
+      continue;
+    }
+
+    // إسناد قسري للأقل حملًا
+    const fallback = pool
+      .map((id) => cand[id])
+      .filter(Boolean)
+      .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))[0];
+
+    const ok =
+      fallback &&
+      assignSingleBundleToTeam(bundle, [fallback], 0, ctxAssign(professor));
+
+    if (ok) {
+      exclusiveSplitProfessorKeys.add(professor.key);
+    } else {
+      console.warn(
+        "❌ EXCLUSIVE FAILED:",
+        professor.professor,
+        bundle.key,
+        (bundle.groups || []).map((g) => g.id),
+      );
     }
   }
-
-  return { exclusiveSplitProfessorKeys };
+}
 }
 
 // مساعد: تعيين Bundle واحد لمشرف
