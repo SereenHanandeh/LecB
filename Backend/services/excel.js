@@ -2332,6 +2332,14 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
 // ============================================================
 // EXCLUSIVE SUPERVISOR ASSIGNMENT (دبلوم / مدمج)
 // ============================================================
+
+// قيد فيزيائي فقط (بدون قواعد التسلسل أو الأيام المتتالية)
+function canTakeBundlePhysically(supervisor, day, period) {
+  if (!supervisor) return false;
+  if (ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS) return true;
+  return !supervisor.occupiedSlots.has(getSupervisorSlotKey(day, period));
+}
+
 function assignExclusiveSupervisorsPerProfessor({
   professorGroups,
   selectedSupervisorIds,
@@ -2344,17 +2352,14 @@ function assignExclusiveSupervisorsPerProfessor({
   twoProfessorsPerSupervisorEnabled,
   variant,
 }) {
-  console.log("========================================");
   console.log("👤 STARTING EXCLUSIVE SUPERVISOR ASSIGNMENT");
-  console.log(
-    "👤 twoProfessorsPerSupervisorEnabled:",
-    twoProfessorsPerSupervisorEnabled,
-  );
-  console.log("========================================");
+  console.log("👤 pair mode:", twoProfessorsPerSupervisorEnabled);
 
   const exclusiveSplitProfessorKeys = new Set();
 
-  // 1) الدكاترة المُلزَمون (Lock/Preassignment/Affinity) أولًا
+  // ---------------------------------------------------------
+  // 1) الدكاترة المُلزَمون (Affinity / Lock / Preassignment)
+  // ---------------------------------------------------------
   const remainingProfessors = [];
 
   for (const professor of professorGroups) {
@@ -2373,6 +2378,7 @@ function assignExclusiveSupervisorsPerProfessor({
         professor: professor.professor,
         supervisor_id: forced.supervisorId,
       });
+      remainingProfessors.push(professor); // لا نتركه بدون تغطية
       continue;
     }
 
@@ -2384,79 +2390,70 @@ function assignExclusiveSupervisorsPerProfessor({
       });
     }
 
-    professorAssignments.set(professor.key, forced.supervisorId);
+    professorAssignments.set(professor.key, Number(forced.supervisorId));
   }
 
-  // 2) ترتيب الدكاترة (الأكبر عبئًا أولًا)
+  // ---------------------------------------------------------
+  // 2) بناء الفرق
+  // ---------------------------------------------------------
   remainingProfessors.sort((a, b) => b.bundles.length - a.bundles.length);
 
-  const numProfessors = remainingProfessors.length;
-  const numSupervisors = selectedSupervisorIds.length;
+  const P = remainingProfessors.length;
 
-  // الوضع الطبيعي = مشرف واحد لكل دكتور
-  // عند التفعيل = مشرفان بالضبط لكل دكتور
+  const pool = [...selectedSupervisorIds]
+    .map(Number)
+    .sort(
+      (a, b) =>
+        seededShuffle(`${variant}-${a}`) - seededShuffle(`${variant}-${b}`),
+    );
+
+  const S = pool.length;
   const baseTeamSize = twoProfessorsPerSupervisorEnabled ? 2 : 1;
 
-  const totalNeeded = numProfessors * baseTeamSize;
-  let surplus = Math.max(0, numSupervisors - totalNeeded);
+  const teamsMap = new Map(); // professorKey -> [supervisorId,...]
 
-  // 3) حوض المشرفين (ترتيب ثابت وقابل لإعادة الإنتاج حسب variant)
-  const supervisorPool = [...selectedSupervisorIds].sort(
-    (a, b) =>
-      seededShuffle(`${variant}-${a}`) - seededShuffle(`${variant}-${b}`),
-  );
+  if (P > 0 && S > 0) {
+    if (S >= P * baseTeamSize) {
+      // مشرفون كافون: كل مشرف لدكتور واحد فقط (حصري)
+      let idx = 0;
 
-  let poolIndex = 0;
+      for (const professor of remainingProfessors) {
+        const team = [];
+        for (let i = 0; i < baseTeamSize; i++) team.push(pool[idx++]);
+        teamsMap.set(professor.key, team);
+      }
 
-  function takeSupervisor() {
-    if (!supervisorPool.length) return null;
-    const id = supervisorPool[poolIndex % supervisorPool.length];
-    poolIndex++;
-    return cand[Number(id)] || null;
+      // الفائض: يُوزَّع بالتناوب على الدكاترة (الأكبر عبئًا أولًا)
+      let p = 0;
+      while (idx < S) {
+        teamsMap.get(remainingProfessors[p % P].key).push(pool[idx++]);
+        p++;
+      }
+    } else {
+      // مشرفون أقل من المطلوب: نختار الأقل حملًا (مشرفون مختلفون داخل الفريق)
+      const load = new Map(
+        pool.map((id) => [id, Number(cand[id]?.total || 0)]),
+      );
+
+      for (const professor of remainingProfessors) {
+        const sorted = [...pool].sort((a, b) => load.get(a) - load.get(b));
+        const team = sorted.slice(0, Math.min(baseTeamSize, S));
+
+        for (const id of team) {
+          load.set(id, load.get(id) + professor.bundles.length / team.length);
+        }
+
+        teamsMap.set(professor.key, team);
+      }
+    }
   }
 
-  // 4) بناء فريق لكل دكتور
-  const teams = new Map();
-
+  // ---------------------------------------------------------
+  // 3) توزيع فترات كل دكتور بالتناوب على فريقه
+  // ---------------------------------------------------------
   for (const professor of remainingProfessors) {
-    let teamSize = baseTeamSize;
-
-    // فائض المشرفين يُعطى دكتورًا إضافيًا في كل مرة، بالتناوب على
-    // الدكاترة (الأكبر عبئًا أولًا لأننا رتّبناهم فوق)
-    if (surplus > 0) {
-      teamSize += 1;
-      surplus -= 1;
-    }
-
-    const team = [];
-
-    for (let i = 0; i < teamSize; i++) {
-      const supervisor = takeSupervisor();
-      if (supervisor) team.push(supervisor);
-    }
-
-    if (!team.length) {
-      conflicts.push({
-        type: "NO_SUPERVISOR_AVAILABLE_EXCLUSIVE_MODE",
-        professor: professor.professor,
-        professor_id: professor.professor_id,
-        message:
-          "لا يوجد مشرفون كافون لتغطية هذا الدكتور في وضع التوزيع الحصري.",
-      });
-      continue;
-    }
-
-    if (team.length > 1) {
-      exclusiveSplitProfessorKeys.add(professor.key);
-    }
-
-    teams.set(professor.key, team);
-  }
-
-  // 5) توزيع فترات كل دكتور بالتناوب على فريقه فقط
-  for (const professor of remainingProfessors) {
-    const team = teams.get(professor.key);
-    if (!team || !team.length) continue;
+    const teamIds = teamsMap.get(professor.key) || [];
+    const team = teamIds.map((id) => cand[Number(id)]).filter(Boolean);
 
     const sortedBundles = [...professor.bundles].sort((a, b) => {
       const dateCompare = String(a.date).localeCompare(String(b.date));
@@ -2464,55 +2461,106 @@ function assignExclusiveSupervisorsPerProfessor({
       return sortPeriods(a.period, b.period);
     });
 
-    let teamCursor = 0;
-    let assignedAny = false;
+    let cursor = 0;
+    const usedSupervisors = new Set();
 
     for (const bundle of sortedBundles) {
-      let placed = false;
+      const representative = bundle.groups?.[0];
+      if (!representative) continue;
+
+      const day = dateISO(representative.date);
+      const period = normalizePeriod(representative.period_label);
+
+      let chosen = null;
 
       for (let attempt = 0; attempt < team.length; attempt++) {
-        const idx = (teamCursor + attempt) % team.length;
-        const candidateSupervisor = team[idx];
+        const idx = (cursor + attempt) % team.length;
 
-        const representative = bundle.groups?.[0];
-        const day = dateISO(representative.date);
-        const period = normalizePeriod(representative.period_label);
-
-        if (canSingleBundleFitSupervisor(candidateSupervisor, day, period)) {
-          assignSingleBundleToTeam(bundle, team, idx, {
-            result,
-            professor,
-            bundleAssignments,
-          });
-
-          teamCursor = (idx + 1) % team.length;
-          placed = true;
-          assignedAny = true;
+        if (canTakeBundlePhysically(team[idx], day, period)) {
+          chosen = team[idx];
+          cursor = (idx + 1) % team.length;
           break;
         }
       }
 
-      if (!placed) {
+      // احتياط: أي مشرف آخر متاح (الأقل حملًا)
+      if (!chosen) {
+        chosen =
+          pool
+            .map((id) => cand[Number(id)])
+            .filter((s) => canTakeBundlePhysically(s, day, period))
+            .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))[0] ||
+          null;
+      }
+
+      if (!chosen) {
         conflicts.push({
-          type: "EXCLUSIVE_TEAM_SLOT_CONFLICT",
+          type: "EXCLUSIVE_NO_SUPERVISOR_FOR_SLOT",
           professor: professor.professor,
           professor_id: professor.professor_id,
-          date: dateISO(bundle.groups?.[0]?.date),
-          period: normalizePeriod(bundle.groups?.[0]?.period_label),
-          message: "جميع أعضاء فريق هذا الدكتور مشغولون فعليًا في هذه الفترة.",
+          date: day,
+          period,
+          message: "لا يوجد مشرف متاح لهذه الفترة.",
         });
+        continue;
+      }
+
+      if (
+        assignSingleBundleToTeam(bundle, [chosen], 0, {
+          result,
+          professor,
+          bundleAssignments,
+        })
+      ) {
+        usedSupervisors.add(Number(chosen.id));
       }
     }
 
-    if (assignedAny) {
-      professorAssignments.set(professor.key, team[0].id);
+    if (usedSupervisors.size > 1) {
+      exclusiveSplitProfessorKeys.add(professor.key);
+    }
+
+    if (usedSupervisors.size) {
+      professorAssignments.set(professor.key, [...usedSupervisors][0]);
     }
   }
 
-  return { teams, exclusiveSplitProfessorKeys };
+  // ---------------------------------------------------------
+  // 4) شبكة أمان: أي محاضرة لم تُوزَّع تُعطى للأقل حملًا
+  // ---------------------------------------------------------
+  for (const professor of professorGroups) {
+    for (const bundle of professor.bundles) {
+      if (bundleAssignments.has(bundle.key)) continue;
+
+      const representative = bundle.groups?.[0];
+      if (!representative) continue;
+
+      const day = dateISO(representative.date);
+      const period = normalizePeriod(representative.period_label);
+
+      const chosen = selectedSupervisorIds
+        .map((id) => cand[Number(id)])
+        .filter((s) => canTakeBundlePhysically(s, day, period))
+        .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))[0];
+
+      if (!chosen) continue;
+
+      if (
+        assignSingleBundleToTeam(bundle, [chosen], 0, {
+          result,
+          professor,
+          bundleAssignments,
+        })
+      ) {
+        exclusiveSplitProfessorKeys.add(professor.key);
+      }
+    }
+  }
+
+  return { exclusiveSplitProfessorKeys };
 }
 
-// مساعد: ينفّذ تعيين Bundle واحد لمشرف من الفريق
+// مساعد: تعيين Bundle واحد لمشرف
 function assignSingleBundleToTeam(
   bundle,
   team,
@@ -2525,9 +2573,7 @@ function assignSingleBundleToTeam(
   let attached = 0;
 
   for (const group of bundle.groups || []) {
-    if (attachGroupToSupervisor(supervisor, group, result)) {
-      attached++;
-    }
+    if (attachGroupToSupervisor(supervisor, group, result)) attached++;
   }
 
   if (!attached) return false;
@@ -2537,8 +2583,7 @@ function assignSingleBundleToTeam(
   const period = normalizePeriod(representative.period_label);
   const rank = getPeriodRank(period);
 
-  if (!supervisor.byDay[day]) supervisor.byDay[day] = 0;
-  supervisor.byDay[day] += 1;
+  supervisor.byDay[day] = (supervisor.byDay[day] || 0) + 1;
   supervisor.total += 1;
   supervisor.lastDay = day;
 
