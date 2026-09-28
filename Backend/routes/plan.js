@@ -24,7 +24,7 @@ planRouter.get("/:planId", Plan.getPlan);
 
 planRouter.post("/:planId/rooms", Plan.setRoomAssignments);
 
-planRouter.put("/plan/:planId/professor/:professorId/room", async (req, res) => {
+planRouter.put("/:planId/professor/:professorId/room", async (req, res) => {
   try {
     const { planId, professorId } = req.params;
     const roomNumber = String(req.body.roomNumber ?? "").trim();
