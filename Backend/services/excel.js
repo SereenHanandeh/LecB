@@ -13,7 +13,6 @@ const xlsx = require("xlsx");
 
 const ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS = true;
 
-
 // يقسم n فترة إلى k كتل متتالية بأحجام متقاربة
 function splitIntoBlocks(n, k) {
   const blocks = Math.max(1, Math.min(k, n));
@@ -2352,7 +2351,6 @@ function canTakeBundlePhysically(supervisor, day, period) {
   return !supervisor.occupiedSlots.has(getSupervisorSlotKey(day, period));
 }
 
-
 function assignExclusiveSupervisorsPerProfessor({
   professorGroups,
   selectedSupervisorIds,
@@ -2492,7 +2490,9 @@ function assignExclusiveSupervisorsPerProfessor({
         p++;
       }
     } else {
-      const load = new Map(pool.map((id) => [id, Number(cand[id]?.total || 0)]));
+      const load = new Map(
+        pool.map((id) => [id, Number(cand[id]?.total || 0)]),
+      );
 
       for (const professor of remainingProfessors) {
         const sorted = [...pool].sort((a, b) => load.get(a) - load.get(b));
@@ -2563,42 +2563,41 @@ function assignExclusiveSupervisorsPerProfessor({
   }
 
   // ---------------------------------------------------------
-  // 4) شبكة أمان: أي محاضرة متبقية تُعيَّن حتمًا
-  // ---------------------------------------------------------
-// 4) شبكة أمان نهائية
-for (const professor of professorGroups) {
-  for (const bundle of professor.bundles) {
-    if (bundleAssignments.has(bundle.key)) continue;
+  // 4) شبكة أمان نهائية
+  for (const professor of professorGroups) {
+    for (const bundle of professor.bundles) {
+      if (bundleAssignments.has(bundle.key)) continue;
 
-    const placed = placeBundle(bundle, professor, null, []);
+      const placed = placeBundle(bundle, professor, null, []);
 
-    if (placed) {
-      exclusiveSplitProfessorKeys.add(professor.key);
-      continue;
-    }
+      if (placed) {
+        exclusiveSplitProfessorKeys.add(professor.key);
+        continue;
+      }
 
-    // إسناد قسري للأقل حملًا
-    const fallback = pool
-      .map((id) => cand[id])
-      .filter(Boolean)
-      .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))[0];
+      const fallback = pool
+        .map((id) => cand[id])
+        .filter(Boolean)
+        .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))[0];
 
-    const ok =
-      fallback &&
-      assignSingleBundleToTeam(bundle, [fallback], 0, ctxAssign(professor));
+      const ok =
+        fallback &&
+        assignSingleBundleToTeam(bundle, [fallback], 0, ctxAssign(professor));
 
-    if (ok) {
-      exclusiveSplitProfessorKeys.add(professor.key);
-    } else {
-      console.warn(
-        "❌ EXCLUSIVE FAILED:",
-        professor.professor,
-        bundle.key,
-        (bundle.groups || []).map((g) => g.id),
-      );
+      if (ok) {
+        exclusiveSplitProfessorKeys.add(professor.key);
+      } else {
+        console.warn(
+          "❌ EXCLUSIVE FAILED:",
+          professor.professor,
+          bundle.key,
+          (bundle.groups || []).map((g) => g.id),
+        );
+      }
     }
   }
-}
+
+  return { exclusiveSplitProfessorKeys }; 
 }
 
 // مساعد: تعيين Bundle واحد لمشرف
@@ -4049,8 +4048,8 @@ async function generatePlan(
 
     group.room_number = Number.isFinite(pid)
       ? (professorRoomMap.get(`${pid}|${day}|${period}`) ??
-         professorRoomMap.get(`pid:${pid}`) ??
-         null)
+        professorRoomMap.get(`pid:${pid}`) ??
+        null)
       : null;
   }
 
@@ -4535,7 +4534,11 @@ async function generatePlan(
   let relaxedFallbackResult = { assigned: 0, stillUnassigned: 0, details: [] };
   let forcedCoverageResult = { assignedBundles: 0, details: [] };
   let rebalanceResult = { moves: 0, totalMoves: 0, iterations: 0 };
-  let minimumRebalanceResult = { moves: 0, iterations: 0, remainingDeficit: [] };
+  let minimumRebalanceResult = {
+    moves: 0,
+    iterations: 0,
+    remainingDeficit: [],
+  };
   let swapRebalanceResult = { totalSwaps: 0, iterations: 0 };
   let minimumSplitResult = {
     moves: 0,
@@ -4567,7 +4570,7 @@ async function generatePlan(
 
     console.log("👤 Exclusive Supervisor Assignment result:", exclusiveResult);
 
-    for (const key of exclusiveResult.exclusiveSplitProfessorKeys) {
+       for (const key of exclusiveResult?.exclusiveSplitProfessorKeys ?? []) {
       exclusiveSplitProfessorKeys.add(key);
     }
   } else {
@@ -5057,6 +5060,15 @@ async function generatePlan(
 
   console.log("📦 result length:", result.length);
 
+
+    for (const bundle of unassignedBundles) {
+    console.warn(
+      "❌ UNASSIGNED BUNDLE:",
+      bundle.professor,
+      bundle.key,
+      (bundle.groups || []).map((g) => ({ id: g.id, type: typeof g.id })),
+    );
+  }
   // ==========================================================
   // Save
   // ==========================================================

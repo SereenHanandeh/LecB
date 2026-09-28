@@ -1051,11 +1051,22 @@ async function getAllPlans() {
       p.status,
       p.created_at,
 
-      -- عدد المشرفين المختارين للخطة
-      (
-        SELECT COUNT(*)
-        FROM duty_pool dp
-        WHERE dp.plan_window_id = p.id
+      -- عدد المشرفين المختارين للخطة (بدون تكرار)
+      -- وإن كان duty_pool فارغًا نعدّ المشرفين المستخدمين فعلًا في التعيينات
+      COALESCE(
+        NULLIF(
+          (
+            SELECT COUNT(DISTINCT dp.supervisor_id)
+            FROM duty_pool dp
+            WHERE dp.plan_window_id = p.id
+          ),
+          0
+        ),
+        (
+          SELECT COUNT(DISTINCT a.supervisor_id)
+          FROM assignments a
+          WHERE a.plan_id = p.id
+        )
       ) AS supervisor_count,
 
       -- عدد التعيينات الموجودة بالخطة
