@@ -2351,6 +2351,35 @@ function canTakeBundlePhysically(supervisor, day, period) {
   return !supervisor.occupiedSlots.has(getSupervisorSlotKey(day, period));
 }
 
+// هل تبقى فترات المشرف في اليوم متتالية بعد إضافة هذه الكتلة؟
+function ranksStayContiguous(supervisor, day, blockBundles) {
+  const set = new Set(supervisor.byDayPeriodRanks?.[day] || []);
+
+  for (const b of blockBundles) {
+    const rank = getPeriodRank(normalizePeriod(b.groups?.[0]?.period_label));
+    if (rank === null || rank === undefined) return true; // لا يوجد ترتيب معروف
+    set.add(rank);
+  }
+
+  const sorted = [...set].sort((a, b) => a - b);
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] !== sorted[i - 1] + 1) return false;
+  }
+
+  return true;
+}
+
+function blockIsFreeFor(supervisor, day, blockBundles) {
+  return blockBundles.every((b) =>
+    canTakeBundlePhysically(
+      supervisor,
+      day,
+      normalizePeriod(b.groups?.[0]?.period_label),
+    ),
+  );
+}
+
 function assignExclusiveSupervisorsPerProfessor({
   professorGroups,
   selectedSupervisorIds,
@@ -2429,6 +2458,41 @@ function assignExclusiveSupervisorsPerProfessor({
     return assignSingleBundleToTeam(bundle, [chosen], 0, ctxAssign(professor))
       ? chosen
       : null;
+  }
+
+    // تعيين كتلة كاملة لمشرف واحد (فريق الدكتور أولًا، ثم أي مشرف مناسب)
+  function placeBlock(blockBundles, professor, preferred, team, day) {
+    const candidates = [];
+    const seen = new Set();
+
+    const push = (s) => {
+      if (s && !seen.has(Number(s.id))) {
+        seen.add(Number(s.id));
+        candidates.push(s);
+      }
+    };
+
+    push(preferred);
+    team.forEach(push);
+    pool
+      .map((id) => cand[id])
+      .filter(Boolean)
+      .sort((a, b) => Number(a.total || 0) - Number(b.total || 0))
+      .forEach(push);
+
+    const chosen = candidates.find(
+      (s) =>
+        blockIsFreeFor(s, day, blockBundles) &&
+        ranksStayContiguous(s, day, blockBundles),
+    );
+
+    if (!chosen) return null;
+
+    for (const b of blockBundles) {
+      assignSingleBundleToTeam(b, [chosen], 0, ctxAssign(professor));
+    }
+
+    return chosen;
   }
 
   // ---------------------------------------------------------
@@ -2539,14 +2603,29 @@ function assignExclusiveSupervisorsPerProfessor({
         : [];
 
       const sizes = splitIntoBlocks(dayBundles.length, rotated.length || 1);
-
       let pos = 0;
 
       sizes.forEach((size, blockIdx) => {
         const preferred = rotated[blockIdx] || null;
+        const blockBundles = dayBundles.slice(pos, pos + size);
+        pos += size;
 
-        for (let i = 0; i < size; i++) {
-          const bundle = dayBundles[pos++];
+        // الأولوية: الكتلة كاملة لمشرف واحد وبفترات متتالية
+        const blockOwner = placeBlock(
+          blockBundles,
+          professor,
+          preferred,
+          team,
+          day,
+        );
+
+        if (blockOwner) {
+          usedSupervisors.add(Number(blockOwner.id));
+          return;
+        }
+
+        // احتياط فقط: لا يوجد مشرف يحقق التتالي، فنوزع محاضرة محاضرة
+        for (const bundle of blockBundles) {
           const chosen = placeBundle(bundle, professor, preferred, team);
           if (chosen) usedSupervisors.add(Number(chosen.id));
         }
