@@ -2333,10 +2333,11 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
 // EXCLUSIVE SUPERVISOR ASSIGNMENT (دبلوم / مدمج)
 // ============================================================
 
-// قيد فيزيائي فقط (بدون قواعد التسلسل أو الأيام المتتالية)
+// قيد فيزيائي صارم لدبلوم/مدمج:
+// المشرف لا يمكن أن يكون عند أكثر من دكتور في نفس اليوم + الفترة
 function canTakeBundlePhysically(supervisor, day, period) {
-  if (!supervisor) return false;
-  if (ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS) return true;
+  if (!supervisor || !day || !period) return false;
+
   return !supervisor.occupiedSlots.has(getSupervisorSlotKey(day, period));
 }
 
