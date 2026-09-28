@@ -24,22 +24,30 @@ planRouter.get("/:planId", Plan.getPlan);
 
 planRouter.post("/:planId/rooms", Plan.setRoomAssignments);
 
-planRouter.put("/:planId/group/:groupId/room", async (req, res) => {
+planRouter.put("/plan/:planId/professor/:professorId/room", async (req, res) => {
   try {
-    const { groupId } = req.params;
+    const { planId, professorId } = req.params;
     const roomNumber = String(req.body.roomNumber ?? "").trim();
+    const professorName = req.body.professorName ?? null;
 
     if (!roomNumber) {
       return res.status(400).json({ success: false, error: "رقم القاعة مطلوب" });
     }
 
     const result = await pool.query(
-      `UPDATE session_groups SET room_number = $1 WHERE id = $2 RETURNING id`,
-      [roomNumber, groupId],
+      `UPDATE room_assignments
+          SET room_number = $1
+        WHERE plan_id = $2 AND professor_id = $3`,
+      [roomNumber, planId, professorId],
     );
 
+    // لا يوجد سجل قاعة لهذا الأستاذ في هذه الخطة → أنشئ واحدًا
     if (!result.rowCount) {
-      return res.status(404).json({ success: false, error: "المجموعة غير موجودة" });
+      await pool.query(
+        `INSERT INTO room_assignments (plan_id, professor_id, name, room_number)
+         VALUES ($1, $2, $3, $4)`,
+        [planId, professorId, professorName, roomNumber],
+      );
     }
 
     res.json({ success: true });
@@ -48,7 +56,6 @@ planRouter.put("/:planId/group/:groupId/room", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 planRouter.get("/:planId/stats", Plan.getStats);
 
 planRouter.patch("/:planId/assignments", Plan.moveAssignment);
