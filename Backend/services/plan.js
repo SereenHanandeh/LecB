@@ -12,20 +12,22 @@ async function createPlanRow({
   dateFrom,
   dateTo,
   category,
+  roomConfig = null,
 }) {
   const result = await pool.query(
     `
-    INSERT INTO plans (
-      name,
-      excel_batch_id,
-      date_from,
-      date_to,
-      category
-    )
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO plans (name, excel_batch_id, date_from, date_to, category, room_config)
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
     RETURNING *
     `,
-    [name, excelBatchId, dateFrom, dateTo, category],
+    [
+      name,
+      excelBatchId,
+      dateFrom,
+      dateTo,
+      category,
+      roomConfig ? JSON.stringify(roomConfig) : null,
+    ],
   );
 
   return result.rows[0];
@@ -415,25 +417,27 @@ async function saveRoomAssignments(planId, items = []) {
         .replace(/\s+/g, " ");
 
       const insertResult = await pool.query(
-        `
-        INSERT INTO room_assignments
-          (plan_id, professor_id, name, room_number, date, period_label)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (plan_id, professor_id, date, period_label)
-        DO UPDATE SET
-          name = EXCLUDED.name,
-          room_number = EXCLUDED.room_number
-        RETURNING *
-        `,
-        [
-          planId,
-          professorId,
-          canonicalName,
-          roomNumber,
-          assignmentDate,
-          periodLabel,
-        ],
-      );
+  `
+  INSERT INTO room_assignments
+    (plan_id, professor_id, name, room_number, date, period_label, pinned)
+  VALUES ($1, $2, $3, $4, $5, $6, $7)
+  ON CONFLICT (plan_id, professor_id, date, period_label)
+  DO UPDATE SET
+    name = EXCLUDED.name,
+    room_number = EXCLUDED.room_number,
+    pinned = EXCLUDED.pinned
+  RETURNING *
+  `,
+  [
+    planId,
+    professorId,
+    canonicalName,
+    roomNumber,
+    assignmentDate,
+    periodLabel,
+    item.pinned === true,
+  ],
+);
 
       saved.push(insertResult.rows[0]);
     } catch (error) {
@@ -455,6 +459,7 @@ async function getRoomAssignments(planId) {
     ra.professor_id,
     ra.name,
     ra.room_number,
+      ra.pinned,
     to_char(ra.date, 'YYYY-MM-DD') AS date,
     ra.period_label,
     p.name AS professor_name
@@ -501,6 +506,47 @@ async function saveAutoRoomAssignments(planId, assignments = []) {
   }
 
   console.log(`🏠 Auto room assignments saved: ${assignments.length}`);
+}
+
+// يستبدل كل قاعات الخطة بالتوزيع الجديد (بعد تجميع قاعات المشرف)
+async function replaceRoomAssignments(planId, rows = []) {
+  if (!rows.length) return;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
+
+    for (const r of rows) {
+      await client.query(
+        `
+        INSERT INTO room_assignments
+          (plan_id, professor_id, name, room_number, date, period_label, pinned)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (plan_id, professor_id, date, period_label)
+        DO UPDATE SET room_number = EXCLUDED.room_number, pinned = EXCLUDED.pinned
+        `,
+        [
+          planId,
+          r.professor_id,
+          r.name ?? "",
+          r.room_number,
+          r.date,
+          r.period_label,
+          r.pinned === true,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 // =====================================================
 // Update Plan Status (Accept / Reject)
@@ -680,6 +726,7 @@ async function getPlanContext(planId) {
     ra.professor_id,
     ra.name,
     ra.room_number,
+     ra.pinned,
     to_char(ra.date, 'YYYY-MM-DD') AS date,
     ra.period_label,
     p.name AS professor_name

@@ -1,5 +1,11 @@
-const { getPlanContext, saveAssignments, getDutyPool, saveAutoRoomAssignments } = require("./plan.js");
+const {
+  getPlanContext,
+  saveAssignments,
+  getDutyPool,
+  saveAutoRoomAssignments,
+} = require("./plan.js");
 const { listRooms } = require("./room.js");
+const { regroupRoomsBySupervisor } = require("./roomGrouping.js");
 const seededShuffle = require("../utils/rng.js");
 
 const { getPeriodRank, normalizePeriod } = require("../utils/distribution.js");
@@ -818,7 +824,8 @@ async function assignRoomsConflictFree({
     const roomNumber = String(row.room_number ?? "").trim();
     const professorId = Number(row.professor_id);
 
-    if (!day || !period || !roomNumber || !Number.isFinite(professorId)) continue;
+    if (!day || !period || !roomNumber || !Number.isFinite(professorId))
+      continue;
 
     const slotKey = buildRoomSlotKey(day, period);
 
@@ -2671,7 +2678,7 @@ function assignExclusiveSupervisorsPerProfessor({
       : null;
   }
 
-    // تعيين كتلة كاملة لمشرف واحد (فريق الدكتور أولًا، ثم أي مشرف مناسب)
+  // تعيين كتلة كاملة لمشرف واحد (فريق الدكتور أولًا، ثم أي مشرف مناسب)
   function placeBlock(blockBundles, professor, preferred, team, day) {
     const candidates = [];
     const seen = new Set();
@@ -2887,7 +2894,7 @@ function assignExclusiveSupervisorsPerProfessor({
     }
   }
 
-  return { exclusiveSplitProfessorKeys }; 
+  return { exclusiveSplitProfessorKeys };
 }
 
 // مساعد: تعيين Bundle واحد لمشرف
@@ -4860,7 +4867,7 @@ async function generatePlan(
 
     console.log("👤 Exclusive Supervisor Assignment result:", exclusiveResult);
 
-       for (const key of exclusiveResult?.exclusiveSplitProfessorKeys ?? []) {
+    for (const key of exclusiveResult?.exclusiveSplitProfessorKeys ?? []) {
       exclusiveSplitProfessorKeys.add(key);
     }
   } else {
@@ -5369,12 +5376,12 @@ async function generatePlan(
 
   const manualRoomRows = rooms; // room_assignments الموجودة مسبقًا لهذه الخطة (من getPlanContext)
 
-const roomAssignmentResult = await assignRoomsConflictFree({
-  bundles,
-  manualRoomRows,
-  conflicts,
-  professorAssignments, // ⬅️ إضافة جديدة: يمرّر الربط الفعلي أستاذ↔مشرف بعد التوزيع
-}); 
+  const roomAssignmentResult = await assignRoomsConflictFree({
+    bundles,
+    manualRoomRows,
+    conflicts,
+    professorAssignments, // ⬅️ إضافة جديدة: يمرّر الربط الفعلي أستاذ↔مشرف بعد التوزيع
+  });
 
   const autoRoomAssignments = roomAssignmentResult.assignments;
 
@@ -5402,15 +5409,52 @@ const roomAssignmentResult = await assignRoomsConflictFree({
     }
   }
 
+  // ===== تجميع قاعات دكاترة نفس المشرف =====
+  const roomConfig = ctx?.plan?.room_config || {};
+  let roomRegroup = { rows: [], conflicts: [], changed: 0 };
+
+  if (
+    roomConfig.groupBySupervisor &&
+    Array.isArray(roomConfig.pool) &&
+    roomConfig.pool.length
+  ) {
+    roomRegroup = regroupRoomsBySupervisor({
+      groups,
+      result,
+      rooms,
+      pool: roomConfig.pool,
+      dateISO,
+      normalizePeriod,
+    });
+
+    conflicts.push(...roomRegroup.conflicts);
+
+    await replaceRoomAssignments(planId, roomRegroup.rows);
+
+    const roomBySlot = new Map(
+      roomRegroup.rows.map((r) => [
+        `${r.professor_id}|${r.date}|${normalizePeriod(r.period_label)}`,
+        r.room_number,
+      ]),
+    );
+
+    for (const row of result) {
+      const k = `${row.professor_id}|${row.date}|${row.period}`;
+      if (roomBySlot.has(k)) row.room_number = roomBySlot.get(k);
+    }
+
+    console.log(
+      `🏠 Rooms regrouped by supervisor. Changed: ${roomRegroup.changed}`,
+    );
+  }
+
   // ==========================================================
   // Save
   // ==========================================================
 
   await saveAssignments(planId, result);
   await saveAutoRoomAssignments(planId, autoRoomAssignments);
-
   console.log(`💾 Assignments saved for plan ${planId}`);
-
 
   console.log("========================================");
   console.log("🔍 FINAL COVERAGE CHECK");
@@ -5427,8 +5471,7 @@ const roomAssignmentResult = await assignRoomsConflictFree({
 
   console.log("📦 result length:", result.length);
 
-
-    for (const bundle of unassignedBundles) {
+  for (const bundle of unassignedBundles) {
     console.warn(
       "❌ UNASSIGNED BUNDLE:",
       bundle.professor,
@@ -5436,13 +5479,6 @@ const roomAssignmentResult = await assignRoomsConflictFree({
       (bundle.groups || []).map((g) => ({ id: g.id, type: typeof g.id })),
     );
   }
-  // ==========================================================
-  // Save
-  // ==========================================================
-
-  await saveAssignments(planId, result);
-await saveAutoRoomAssignments(planId, autoRoomAssignments);
-  console.log(`💾 Assignments saved for plan ${planId}`);
 
   // ==========================================================
   // Statistics

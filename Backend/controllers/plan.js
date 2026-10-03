@@ -114,6 +114,16 @@ async function createPlan(req, res) {
       });
     }
 
+    const safeRoomConfig =
+  roomConfig && typeof roomConfig === "object"
+    ? {
+        groupBySupervisor: Boolean(roomConfig.groupBySupervisor),
+        pool: Array.isArray(roomConfig.pool)
+          ? [...new Set(roomConfig.pool.map(String))]
+          : [],
+      }
+    : null;
+
     // ==============================
     // Create plan
     // ==============================
@@ -124,6 +134,7 @@ async function createPlan(req, res) {
       dateFrom,
       dateTo,
       category: selectedCategory,
+      roomConfig: safeRoomConfig,
     });
 
     console.log("========================================");
