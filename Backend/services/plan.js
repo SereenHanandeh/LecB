@@ -354,8 +354,15 @@ async function saveAffinities(planId, items = []) {
 
 const VALID_ROOMS = new Set([
   ...Array.from({ length: 16 }, (_, i) => String(i + 1)), // 1..16 (6 = out, 15 = mentor)
-  "40", "42", "46", "47", "48", "49",
-  "100", "101", "102", // خاصة
+  "40",
+  "42",
+  "46",
+  "47",
+  "48",
+  "49",
+  "100",
+  "101",
+  "102", // خاصة
 ]);
 
 const normalizeRoomDate = (value) => {
@@ -573,19 +580,19 @@ async function getRoomAssignments(planId) {
   const result = await pool.query(
     `
     SELECT
-    SELECT
-  ra.id,
-  ra.plan_id,
-  ra.professor_id,
-  ra.name,
-  ra.room_number,
-  to_char(ra.date, 'YYYY-MM-DD') AS date,
-  ra.period_label,
-  p.name AS professor_name
-FROM room_assignments ra
-LEFT JOIN professors p ON p.id = ra.professor_id
-WHERE ra.plan_id = $1
-ORDER BY ra.professor_id, ra.date, ra.period_label
+    ra.id,
+    ra.plan_id,
+    ra.professor_id,
+    ra.name,
+    ra.room_number,
+    to_char(ra.date, 'YYYY-MM-DD') AS date,
+    ra.period_label,
+    p.name AS professor_name
+  FROM room_assignments ra
+  LEFT JOIN professors p
+    ON p.id = ra.professor_id
+  WHERE ra.plan_id = $1
+  ORDER BY ra.professor_id, ra.date, ra.period_label
     `,
     [planId],
   );
@@ -764,18 +771,20 @@ async function getPlanContext(planId) {
 
   const roomsResult = await pool.query(
     `
-    SELECT
-      ra.id,
-      ra.plan_id,
-      ra.professor_id,
-      ra.name,
-      ra.room_number,
-      p.name AS professor_name
-    FROM room_assignments ra
-    LEFT JOIN professors p
-      ON p.id = ra.professor_id
-    WHERE ra.plan_id = $1
-    ORDER BY ra.professor_id
+   SELECT
+    ra.id,
+    ra.plan_id,
+    ra.professor_id,
+    ra.name,
+    ra.room_number,
+    to_char(ra.date, 'YYYY-MM-DD') AS date,
+    ra.period_label,
+    p.name AS professor_name
+  FROM room_assignments ra
+  LEFT JOIN professors p
+    ON p.id = ra.professor_id
+  WHERE ra.plan_id = $1
+  ORDER BY ra.professor_id, ra.date, ra.period_label
     `,
     [planId],
   );
@@ -801,63 +810,65 @@ async function fetchPlan(planId) {
   // جلب Context الخطة
   const ctx = await getPlanContext(planId);
 
-  // ---------------------------------------------------
-  // جلب Assignments مع كل بيانات Session Group
-  // ---------------------------------------------------
-
   const assignmentsResult = await pool.query(
     `
-  SELECT
-    a.id,
-    a.plan_id,
-    a.session_group_id,
-    a.supervisor_id,
+    SELECT
+      a.id,
+      a.plan_id,
+      a.session_group_id,
+      a.supervisor_id,
 
-    -- بيانات المشرف
-    s.name AS supervisor_name,
+      s.name AS supervisor_name,
 
-    -- بيانات Session Group
-    sg.crn,
-    COALESCE(sg.course_name, c.name) AS course_name,
-    sg.date,
-    sg.period_label,
-    sg.time_from,
-    sg.time_to,
-    sg.required_supervisors,
-    sg.sessions,
+      sg.crn,
+      COALESCE(sg.course_name, c.name) AS course_name,
+      sg.date,
+      sg.period_label,
+      sg.time_from,
+      sg.time_to,
+      sg.required_supervisors,
+      sg.sessions,
 
-    -- بيانات الأستاذ
-    sg.professor_id,
-    p.name AS professor_name,
+      sg.professor_id,
+      p.name AS professor_name,
 
-    -- ✅ رقم القاعة
-    ra.room_number
+      ra.room_number
 
-  FROM assignments a
+    FROM assignments a
 
-  JOIN supervisors s
-    ON s.id = a.supervisor_id
+    JOIN supervisors s
+      ON s.id = a.supervisor_id
 
-  JOIN session_groups sg
-    ON sg.id = a.session_group_id
+    JOIN session_groups sg
+      ON sg.id = a.session_group_id
 
-  LEFT JOIN courses c
-    ON c.crn = sg.crn
+    LEFT JOIN courses c
+      ON c.crn = sg.crn
 
-  LEFT JOIN professors p
-    ON p.id = sg.professor_id
+    LEFT JOIN professors p
+      ON p.id = sg.professor_id
 
-  -- ✅ ربط القاعة عبر الأستاذ + نفس الخطة
-  LEFT JOIN LATERAL (
-  SELECT r.room_number
-  FROM room_assignments r
-  WHERE r.plan_id = a.plan_id
-    AND r.professor_id = sg.professor_id
-    AND (r.date IS NULL OR (r.date = sg.date AND r.period_label = sg.period_label))
-  ORDER BY (r.date IS NULL) ASC, r.id
-  LIMIT 1
-) ra ON TRUE
-  `,
+    LEFT JOIN LATERAL (
+      SELECT r.room_number
+      FROM room_assignments r
+      WHERE r.plan_id = a.plan_id
+        AND r.professor_id = sg.professor_id
+        AND (
+          r.date IS NULL
+          OR (r.date = sg.date AND r.period_label = sg.period_label)
+        )
+      ORDER BY (r.date IS NULL) ASC, r.id
+      LIMIT 1
+    ) ra ON TRUE
+
+    WHERE a.plan_id = $1
+
+    ORDER BY
+      sg.date,
+      sg.period_label,
+      sg.id,
+      a.id
+    `,
     [planId],
   );
 
