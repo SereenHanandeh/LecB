@@ -13,8 +13,7 @@ const {
   getAcceptedSupervisorStatsSvc,
   deletePlanSvc,
   saveRoomAssignments,
-  saveAutoRoomAssignments
-  
+  saveAutoRoomAssignments,
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
@@ -28,7 +27,10 @@ console.log(Object.keys(planService));
 console.log("🔧 createPlanRow type:", typeof planService.createPlanRow);
 console.log("====================================");
 
-console.log("🔍 plan service exports:", Object.keys(require("../services/plan.js")));
+console.log(
+  "🔍 plan service exports:",
+  Object.keys(require("../services/plan.js")),
+);
 
 // =====================================================
 // Error Handler
@@ -48,17 +50,23 @@ async function createPlan(req, res) {
   try {
     const {
       name,
-      excelBatchId,
-      dateFrom,
-      dateTo,
+      excelBatchId: excelBatchIdCamel,
+      excel_batch_id,
+      dateFrom: dateFromCamel,
+      date_from,
+      dateTo: dateToCamel,
+      date_to,
       category,
       planCategory,
       plan_category,
+      roomConfig,
     } = req.body;
 
-    // دعم أكثر من اسم قادم من Frontend
-    const selectedCategory =
-      category ?? planCategory ?? plan_category;
+    const excelBatchId = excelBatchIdCamel ?? excel_batch_id;
+    const dateFrom = dateFromCamel ?? date_from;
+    const dateTo = dateToCamel ?? date_to;
+
+    const selectedCategory = category ?? planCategory ?? plan_category;
 
     // ==============================
     // Required fields
@@ -67,8 +75,7 @@ async function createPlan(req, res) {
     if (!name || !excelBatchId || !dateFrom || !dateTo) {
       return res.status(400).json({
         success: false,
-        error:
-          "name, excelBatchId, dateFrom and dateTo are required",
+        error: "name, excelBatchId, dateFrom and dateTo are required",
       });
     }
 
@@ -76,17 +83,12 @@ async function createPlan(req, res) {
     // Validate category
     // ==============================
 
-    const allowedCategories = [
-      "مدمج",
-      "دبلوم",
-      "متطلبات",
-    ];
+    const allowedCategories = ["مدمج", "دبلوم", "متطلبات"];
 
     if (!allowedCategories.includes(selectedCategory)) {
       return res.status(400).json({
         success: false,
-        error:
-          "يجب اختيار فئة صحيحة للخطة: مدمج، دبلوم، أو متطلبات",
+        error: "يجب اختيار فئة صحيحة للخطة: مدمج، دبلوم، أو متطلبات",
       });
     }
 
@@ -97,10 +99,7 @@ async function createPlan(req, res) {
     const fromDate = new Date(dateFrom);
     const toDate = new Date(dateTo);
 
-    if (
-      Number.isNaN(fromDate.getTime()) ||
-      Number.isNaN(toDate.getTime())
-    ) {
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
       return res.status(400).json({
         success: false,
         error: "Invalid dateFrom or dateTo",
@@ -115,14 +114,14 @@ async function createPlan(req, res) {
     }
 
     const safeRoomConfig =
-  roomConfig && typeof roomConfig === "object"
-    ? {
-        groupBySupervisor: Boolean(roomConfig.groupBySupervisor),
-        pool: Array.isArray(roomConfig.pool)
-          ? [...new Set(roomConfig.pool.map(String))]
-          : [],
-      }
-    : null;
+      roomConfig && typeof roomConfig === "object"
+        ? {
+            groupBySupervisor: Boolean(roomConfig.groupBySupervisor),
+            pool: Array.isArray(roomConfig.pool)
+              ? [...new Set(roomConfig.pool.map(String))]
+              : [],
+          }
+        : null;
 
     // ==============================
     // Create plan
@@ -149,11 +148,7 @@ async function createPlan(req, res) {
       data: plan,
     });
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error creating plan",
-    );
+    return handleError(res, err, "Error creating plan");
   }
 }
 
@@ -191,11 +186,7 @@ async function setDutyPool(req, res) {
       });
     }
 
-    // ندعم أكثر من شكل قادم من الـ Frontend:
-    // 1) [1, 2, 3]
-    // 2) ["1", "2", "3"]
-    // 3) [{ id: 1 }, { id: 2 }]
-    // 4) [{ supervisor_id: 1 }, { supervisor_id: 2 }]
+   
     const uniqueIds = Array.from(
       new Set(
         supervisorIds
@@ -325,7 +316,7 @@ async function generate(req, res) {
       variant = 1,
       minimumPeriodsEnabled = false,
       minimumPeriods = 4,
-      twoProfessorsPerSupervisorEnabled  = false
+      twoProfessorsPerSupervisorEnabled = false,
     } = req.body || {};
 
     if (!planId) {
@@ -337,84 +328,54 @@ async function generate(req, res) {
 
     const parsedVariant = Number(variant);
 
-    if (
-      !Number.isInteger(parsedVariant) ||
-      parsedVariant < 1
-    ) {
+    if (!Number.isInteger(parsedVariant) || parsedVariant < 1) {
       return res.status(400).json({
         success: false,
-        error:
-          "variant must be a positive integer",
+        error: "variant must be a positive integer",
       });
     }
 
-    const parsedMinimumEnabled =
-      Boolean(minimumPeriodsEnabled);
+    const parsedMinimumEnabled = Boolean(minimumPeriodsEnabled);
 
-    const parsedMinimumPeriods =
-      Number(minimumPeriods);
+    const parsedMinimumPeriods = Number(minimumPeriods);
 
-    if (
-      !Number.isInteger(
-        parsedMinimumPeriods,
-      ) ||
-      parsedMinimumPeriods < 1
-    ) {
+    if (!Number.isInteger(parsedMinimumPeriods) || parsedMinimumPeriods < 1) {
       return res.status(400).json({
         success: false,
-        error:
-          "minimumPeriods must be a positive integer",
+        error: "minimumPeriods must be a positive integer",
       });
     }
 
-    console.log(
-      "🚀 GENERATING PLAN",
-      {
-        planId,
-        variant: parsedVariant,
-        minimumPeriodsEnabled:
-          parsedMinimumEnabled,
-        minimumPeriods:
-          parsedMinimumPeriods,
-      },
+    console.log("🚀 GENERATING PLAN", {
+      planId,
+      variant: parsedVariant,
+      minimumPeriodsEnabled: parsedMinimumEnabled,
+      minimumPeriods: parsedMinimumPeriods,
+    });
+
+    const generated = await generatePlan(
+      planId,
+      parsedVariant,
+      parsedMinimumEnabled,
+      parsedMinimumPeriods,
+      twoProfessorsPerSupervisorEnabled,
     );
 
-    const generated =
-      await generatePlan(
-        planId,
-        parsedVariant,
-        parsedMinimumEnabled,
-        parsedMinimumPeriods,
-          twoProfessorsPerSupervisorEnabled , 
-
-      );
-
-    console.log(
-      "✅ Generated plan:",
-      generated,
-    );
+    console.log("✅ Generated plan:", generated);
 
     return res.json({
       success: true,
 
-      message:
-        "Plan generated successfully",
+      message: "Plan generated successfully",
 
       data: generated,
 
-      stats:
-        generated.statistics || null,
+      stats: generated.statistics || null,
 
-      downloadUrl:
-        `/exports/plan_${planId}.xlsx`,
+      downloadUrl: `/exports/plan_${planId}.xlsx`,
     });
-
   } catch (err) {
-    return handleError(
-      res,
-      err,
-      "Error generating plan",
-    );
+    return handleError(res, err, "Error generating plan");
   }
 }
 
@@ -558,16 +519,11 @@ async function unlockAssignment(req, res) {
 // Move Assignment
 // =====================================================
 
-
 async function moveAssignment(req, res) {
   try {
     const { planId } = req.params;
 
-    const {
-      fromSupervisorId,
-      toSupervisorId,
-      sessionGroupId,
-    } = req.body;
+    const { fromSupervisorId, toSupervisorId, sessionGroupId } = req.body;
 
     console.log("====================================");
     console.log("🔄 MOVE ASSIGNMENT REQUEST");
@@ -613,8 +569,7 @@ async function moveAssignment(req, res) {
 
       return res.status(400).json({
         success: false,
-        error:
-          "Supervisor IDs and sessionGroupId must be valid integers",
+        error: "Supervisor IDs and sessionGroupId must be valid integers",
       });
     }
 
@@ -710,8 +665,7 @@ async function updateStatus(req, res) {
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        error:
-          "status must be one of: draft, accepted, rejected",
+        error: "status must be one of: draft, accepted, rejected",
       });
     }
 
@@ -798,7 +752,6 @@ async function getAcceptedSupervisorStats(req, res) {
       success: true,
       data: stats,
     });
-
   } catch (error) {
     console.error("====================================");
     console.error("GET ACCEPTED SUPERVISOR STATS ERROR");
@@ -837,5 +790,5 @@ module.exports = {
   getStats,
   updateStatus,
   deletePlan,
-  getAcceptedSupervisorStats
+  getAcceptedSupervisorStats,
 };
