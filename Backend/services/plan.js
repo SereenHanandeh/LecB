@@ -1283,6 +1283,7 @@ module.exports = {
   planStats,
   getAllPlans,
 
+  saveAutoRoomAssignments,
   deletePlanSvc,
   getAcceptedSupervisorStatsSvc,
 };

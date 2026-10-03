@@ -13,6 +13,7 @@ const {
   getAcceptedSupervisorStatsSvc,
   deletePlanSvc,
   saveRoomAssignments,
+  saveAutoRoomAssignments
   
 } = require("../services/plan.js");
 
