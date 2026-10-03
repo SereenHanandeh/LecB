@@ -3,7 +3,7 @@ const {
   createRoom,
   updateRoom,
   deleteRoom,
-} = require("../services/rooms.js");
+} = require("../services/room.js");
 
 function handleError(res, err, message = "Internal server error") {
   console.error(`❌ ${message}:`, err);
