@@ -470,6 +470,38 @@ async function getRoomAssignments(planId) {
   return result.rows;
 }
 
+// Auto Room Assignments (من محرك التوزيع — Conflict-Free)
+// =====================================================
+
+async function saveAutoRoomAssignments(planId, assignments = []) {
+  if (!Array.isArray(assignments) || !assignments.length) return;
+
+  for (const item of assignments) {
+    if (item.professorId == null) continue;
+
+    await pool.query(
+      `
+      INSERT INTO room_assignments
+        (plan_id, professor_id, name, room_number, date, period_label)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (plan_id, professor_id, date, period_label)
+      DO UPDATE SET
+        room_number = EXCLUDED.room_number,
+        name = EXCLUDED.name
+      `,
+      [
+        planId,
+        item.professorId,
+        item.professorName ?? null,
+        item.roomNumber,
+        item.date,
+        item.period,
+      ],
+    );
+  }
+
+  console.log(`🏠 Auto room assignments saved: ${assignments.length}`);
+}
 // =====================================================
 // Update Plan Status (Accept / Reject)
 // =====================================================
