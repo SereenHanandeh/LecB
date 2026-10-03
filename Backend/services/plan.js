@@ -373,6 +373,7 @@ const normalizeRoomDate = (value) => {
 };
 
 async function saveRoomAssignments(planId, items = []) {
+  console.log("🏠 SAVING ROOM ASSIGNMENTS:", planId, items.length, items[0]);
   await pool.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
 
   if (!Array.isArray(items) || !items.length) return [];
@@ -457,124 +458,6 @@ async function saveRoomAssignments(planId, items = []) {
   return saved;
 }
 
-async function saveRoomAssignments(planId, items = []) {
-  console.log("========================================");
-  console.log("🏠 SAVING ROOM ASSIGNMENTS");
-  console.log("📌 Plan ID:", planId);
-  console.log("📌 Received items:", items);
-  console.log("========================================");
-
-  await pool.query(
-    `
-    DELETE FROM room_assignments
-    WHERE plan_id = $1
-    `,
-    [planId],
-  );
-
-  if (!Array.isArray(items) || !items.length) {
-    console.log("ℹ️ No room assignments to save.");
-    return [];
-  }
-
-  const saved = [];
-
-  for (const item of items) {
-    try {
-      let professorId = Number(item.professorId ?? item.professor_id ?? NaN);
-
-      let professorName = String(
-        item.professorName ?? item.professor_name ?? item.name ?? "",
-      )
-        .trim()
-        .replace(/\s+/g, " ");
-
-      const roomNumber = String(
-        item.roomNumber ?? item.room_number ?? "",
-      ).trim();
-
-      if (!VALID_ROOMS.has(roomNumber)) {
-        console.warn("⚠️ Invalid room number:", roomNumber, item);
-        continue;
-      }
-
-      if (!Number.isInteger(professorId)) {
-        if (!professorName) {
-          console.warn(
-            "⚠️ Room assignment ignored: no professor ID and no professor name.",
-            item,
-          );
-          continue;
-        }
-
-        const professorByName = await pool.query(
-          `
-          SELECT id, name
-          FROM professors
-          WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
-          ORDER BY id
-          LIMIT 1
-          `,
-          [professorName],
-        );
-
-        if (professorByName.rowCount === 0) {
-          console.warn(`⚠️ Professor not found by name: "${professorName}"`);
-          continue;
-        }
-
-        professorId = Number(professorByName.rows[0].id);
-        professorName = professorByName.rows[0].name;
-      }
-
-      const professorCheck = await pool.query(
-        `SELECT id, name FROM professors WHERE id = $1`,
-        [professorId],
-      );
-
-      if (professorCheck.rowCount === 0) {
-        console.warn(`⚠️ Professor ${professorId} does not exist`);
-        continue;
-      }
-
-      const canonicalProfessorName = String(
-        professorCheck.rows[0].name || professorName,
-      )
-        .trim()
-        .replace(/\s+/g, " ");
-
-      const insertResult = await pool.query(
-        `
-        INSERT INTO room_assignments (
-          plan_id, professor_id, name, room_number
-        )
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (plan_id, professor_id)
-        DO UPDATE SET
-          name = EXCLUDED.name,
-          room_number = EXCLUDED.room_number
-        RETURNING *
-        `,
-        [planId, professorId, canonicalProfessorName, roomNumber],
-      );
-
-      saved.push(insertResult.rows[0]);
-
-      console.log("✅ Room assignment saved:", {
-        planId,
-        professorId,
-        professorName: canonicalProfessorName,
-        roomNumber,
-      });
-    } catch (error) {
-      console.error("❌ Error saving room assignment:", item, error);
-    }
-  }
-
-  console.log(`🏠 Room assignments saved: ${saved.length}/${items.length}`);
-
-  return saved;
-}
 
 async function getRoomAssignments(planId) {
   const result = await pool.query(
