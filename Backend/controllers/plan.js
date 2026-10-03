@@ -18,6 +18,15 @@ const {
 
 const { generatePlan } = require("../services/excel.js");
 
+const planService = require("../services/plan.js");
+
+console.log("====================================");
+console.log("🔍 PLAN SERVICE DEBUG");
+console.log("📁 Loaded plan.js exports:");
+console.log(Object.keys(planService));
+console.log("🔧 createPlanRow type:", typeof planService.createPlanRow);
+console.log("====================================");
+
 console.log("🔍 plan service exports:", Object.keys(require("../services/plan.js")));
 
 // =====================================================
