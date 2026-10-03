@@ -1,5 +1,5 @@
 const { getPlanContext, saveAssignments, getDutyPool, saveAutoRoomAssignments } = require("./plan.js");
-const { listRooms } = require("./rooms.js");
+const { listRooms } = require("./room.js");
 const seededShuffle = require("../utils/rng.js");
 
 const { getPeriodRank, normalizePeriod } = require("../utils/distribution.js");
