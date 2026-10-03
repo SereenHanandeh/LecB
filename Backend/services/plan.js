@@ -1329,6 +1329,7 @@ module.exports = {
   getRoomAssignments,
   planStats,
   getAllPlans,
+  replaceRoomAssignments, 
 
   saveAutoRoomAssignments,
   deletePlanSvc,

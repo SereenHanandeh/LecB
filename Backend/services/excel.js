@@ -3,6 +3,7 @@ const {
   saveAssignments,
   getDutyPool,
   saveAutoRoomAssignments,
+  replaceRoomAssignments
 } = require("./plan.js");
 const { listRooms } = require("./room.js");
 const { regroupRoomsBySupervisor } = require("./roomGrouping.js");
