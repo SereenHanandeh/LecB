@@ -1,5 +1,7 @@
 const pool = require("../models/db");
 
+
+const { getActiveRoomNumbers } = require("./room.js");
 // =====================================================
 // إنشاء خطة جديدة
 // =====================================================
@@ -347,23 +349,6 @@ async function saveAffinities(planId, items = []) {
   return saved;
 }
 
-// =====================================================
-// Room Assignments
-// Professor -> Room
-// =====================================================
-
-const VALID_ROOMS = new Set([
-  ...Array.from({ length: 16 }, (_, i) => String(i + 1)), // 1..16 (6 = out, 15 = mentor)
-  "40",
-  "42",
-  "46",
-  "47",
-  "48",
-  "49",
-  "100",
-  "101",
-  "102", // خاصة
-]);
 
 const normalizeRoomDate = (value) => {
   const m = String(value ?? "")
@@ -377,6 +362,8 @@ async function saveRoomAssignments(planId, items = []) {
   await pool.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
 
   if (!Array.isArray(items) || !items.length) return [];
+
+  const validRoomNumbers = await getActiveRoomNumbers();
 
   const saved = [];
 
@@ -393,7 +380,7 @@ async function saveRoomAssignments(planId, items = []) {
         item.roomNumber ?? item.room_number ?? "",
       ).trim();
 
-      if (!VALID_ROOMS.has(roomNumber)) {
+      if (!validRoomNumbers.has(roomNumber)) {
         console.warn("⚠️ Invalid room number:", roomNumber, item);
         continue;
       }
@@ -482,6 +469,7 @@ async function getRoomAssignments(planId) {
 
   return result.rows;
 }
+
 // =====================================================
 // Update Plan Status (Accept / Reject)
 // =====================================================
