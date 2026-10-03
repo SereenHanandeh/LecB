@@ -1,7 +1,7 @@
 const pool = require("../models/db");
 
 
-const { getActiveRoomNumbers } = require("./rooms.js");
+const { getActiveRoomNumbers } = require("./room.js");
 // =====================================================
 // إنشاء خطة جديدة
 // =====================================================
