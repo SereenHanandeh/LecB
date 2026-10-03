@@ -3,7 +3,7 @@ const {
   saveAssignments,
   getDutyPool,
   saveAutoRoomAssignments,
-  replaceRoomAssignments
+  replaceRoomAssignments,
 } = require("./plan.js");
 const { listRooms } = require("./room.js");
 const { regroupRoomsBySupervisor } = require("./roomGrouping.js");
@@ -4827,8 +4827,6 @@ async function generatePlan(
   const isExclusiveSupervisorCategory =
     planCategory === "دبلوم" || planCategory === "مدمج";
 
-  // النتائج المشتركة (تُستخدم لاحقًا في الإحصائيات وتصدير الإكسل
-  // بغض النظر عن الفئة)
   let relaxedFallbackResult = { assigned: 0, stillUnassigned: 0, details: [] };
   let forcedCoverageResult = { assignedBundles: 0, details: [] };
   let rebalanceResult = { moves: 0, totalMoves: 0, iterations: 0 };
@@ -5413,6 +5411,7 @@ async function generatePlan(
   // ===== تجميع قاعات دكاترة نفس المشرف =====
   const roomConfig = ctx?.plan?.room_config || {};
   let roomRegroup = { rows: [], conflicts: [], changed: 0 };
+  let roomsAlreadySaved = false;
 
   if (
     roomConfig.groupBySupervisor &&
@@ -5431,6 +5430,7 @@ async function generatePlan(
     conflicts.push(...roomRegroup.conflicts);
 
     await replaceRoomAssignments(planId, roomRegroup.rows);
+    roomsAlreadySaved = true;
 
     const roomBySlot = new Map(
       roomRegroup.rows.map((r) => [
@@ -5438,6 +5438,17 @@ async function generatePlan(
         r.room_number,
       ]),
     );
+
+    const seen = new Set();
+    rows = rows.filter((r) => {
+      const k = `${r.date}|${r.period_label}|${r.room_number}`;
+      if (seen.has(k)) {
+        console.warn("⚠️ Duplicate room slot skipped:", k, r.name);
+        return false;
+      }
+      seen.add(k);
+      return true;
+    });
 
     for (const row of result) {
       const k = `${row.professor_id}|${row.date}|${row.period}`;
@@ -5454,7 +5465,10 @@ async function generatePlan(
   // ==========================================================
 
   await saveAssignments(planId, result);
-  await saveAutoRoomAssignments(planId, autoRoomAssignments);
+
+  if (!roomsAlreadySaved) {
+    await saveAutoRoomAssignments(planId, autoRoomAssignments);
+  }
   console.log(`💾 Assignments saved for plan ${planId}`);
 
   console.log("========================================");

@@ -128,6 +128,7 @@ function regroupRoomsBySupervisor({
       }
 
       // احتياط: قاعة مختلفة لكل فترة
+          // احتياط: قاعة مختلفة لكل فترة
       for (const s of profSlots) {
         const r =
           supRooms.find((x) => slotFree(s, x)) ??
@@ -143,8 +144,12 @@ function regroupRoomsBySupervisor({
           continue;
         }
 
+        // القاعة الأصلية فقط إذا كانت فاضية (حتى لا تتكرر القاعة بنفس الفترة)
         const original = originalRoom.get(s.key);
-        if (original) assigned.set(s.key, original);
+        if (original && slotFree(s, original)) {
+          take(s, original);
+          continue;
+        }
 
         conflicts.push({
           type: "ROOM_NOT_AVAILABLE",
