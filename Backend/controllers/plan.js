@@ -18,6 +18,8 @@ const {
 
 const { generatePlan } = require("../services/excel.js");
 
+console.log("🔍 plan service exports:", Object.keys(require("../services/plan.js")));
+
 // =====================================================
 // Error Handler
 // =====================================================
