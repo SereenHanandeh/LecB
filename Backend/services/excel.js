@@ -5333,10 +5333,6 @@ async function generatePlan(
   // COVERAGE CHECK
   // ==========================================================
 
-  // ==========================================================
-  // COVERAGE CHECK
-  // ==========================================================
-
   const unassignedBundles = bundles.filter(
     (bundle) => !bundleAssignments.has(bundle.key),
   );
@@ -5429,6 +5425,29 @@ async function generatePlan(
 
     conflicts.push(...roomRegroup.conflicts);
 
+    const coveredKeys = new Set(
+      roomRegroup.rows.map(
+        (r) => `${r.professor_id}|${r.date}|${normalizePeriod(r.period_label)}`,
+      ),
+    );
+
+    const extraRows = autoRoomAssignments
+      .filter(
+        (a) =>
+          a.professorId != null &&
+          !coveredKeys.has(
+            `${a.professorId}|${a.date}|${normalizePeriod(a.period)}`,
+          ),
+      )
+      .map((a) => ({
+        professor_id: a.professorId,
+        name: a.professorName ?? "",
+        room_number: a.roomNumber,
+        date: a.date,
+        period_label: a.period,
+        pinned: false,
+      }));
+
     await replaceRoomAssignments(planId, roomRegroup.rows);
     roomsAlreadySaved = true;
 
@@ -5438,17 +5457,6 @@ async function generatePlan(
         r.room_number,
       ]),
     );
-
-    const seen = new Set();
-    rows = rows.filter((r) => {
-      const k = `${r.date}|${r.period_label}|${r.room_number}`;
-      if (seen.has(k)) {
-        console.warn("⚠️ Duplicate room slot skipped:", k, r.name);
-        return false;
-      }
-      seen.add(k);
-      return true;
-    });
 
     for (const row of result) {
       const k = `${row.professor_id}|${row.date}|${row.period}`;
@@ -5467,6 +5475,7 @@ async function generatePlan(
   await saveAssignments(planId, result);
 
   if (!roomsAlreadySaved) {
+    // ✅
     await saveAutoRoomAssignments(planId, autoRoomAssignments);
   }
   console.log(`💾 Assignments saved for plan ${planId}`);

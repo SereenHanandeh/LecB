@@ -507,19 +507,35 @@ async function saveAutoRoomAssignments(planId, assignments = []) {
 
   console.log(`🏠 Auto room assignments saved: ${assignments.length}`);
 }
+async function replaceRoomAssignments(planId, inputRows = []) {
+  if (!Array.isArray(inputRows) || !inputRows.length) return;
 
-// يستبدل كل قاعات الخطة بالتوزيع الجديد (بعد تجميع قاعات المشرف)
-async function replaceRoomAssignments(planId, rows = []) {
-  if (!rows.length) return;
+  // إزالة التكرار (نفس القاعة بنفس التاريخ والفترة)
+  const seen = new Set();
+  const uniqueRows = [];
+
+  for (const r of inputRows) {
+    const k = `${r.date}|${r.period_label}|${r.room_number}`;
+
+    if (seen.has(k)) {
+      console.warn("⚠️ Duplicate room slot skipped:", k, r.name);
+      continue;
+    }
+
+    seen.add(k);
+    uniqueRows.push(r);
+  }
 
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
+    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [
+      planId,
+    ]);
 
-    for (const r of rows) {
+    for (const r of uniqueRows) {
       await client.query(
         `
         INSERT INTO room_assignments
