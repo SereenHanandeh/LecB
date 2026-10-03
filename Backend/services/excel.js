@@ -765,7 +765,12 @@ function buildRoomSlotKey(day, period) {
   return `${day}|${normalizePeriod(period)}`;
 }
 
-async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
+async function assignRoomsConflictFree({
+  bundles,
+  manualRoomRows,
+  conflicts,
+  professorAssignments,
+}) {
   console.log("========================================");
   console.log("🏠 STARTING ROOM ASSIGNMENT ENGINE");
   console.log("========================================");
@@ -824,17 +829,49 @@ async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
     manualRoomsUsed.get(slotKey).add(roomNumber);
   }
 
-  // 3) التوزيع الفعلي
+  // 3) خريطة أستاذ -> مشرف (لتفضيل نفس القاعة لدكاترة نفس المشرف)
+  const professorSupervisorMap = new Map(); // professorKey -> supervisorId
+
+  if (professorAssignments) {
+    for (const [profKey, supId] of professorAssignments.entries()) {
+      if (supId !== "MULTIPLE" && Number.isFinite(Number(supId))) {
+        professorSupervisorMap.set(profKey, Number(supId));
+      }
+    }
+  }
+
+  // القاعة المفضّلة لكل مشرف (تُبنى تدريجيًا مع أول تخصيص فعلي)
+  const supervisorPreferredRoom = new Map(); // supervisorId -> roomNumber
+
+  // ترتيب ثابت للفترات حتى تُبنى الأفضليات بنفس الطريقة في كل تشغيل
+  const orderedSlotKeys = [...slotMap.keys()].sort();
+
+  // 4) التوزيع الفعلي
   const assignments = []; // { professorId, professorKey, professorName, date, period, roomNumber }
 
-  for (const [slotKey, profMap] of slotMap) {
+  for (const slotKey of orderedSlotKeys) {
+    const profMap = slotMap.get(slotKey);
     const [day, period] = slotKey.split("|");
     const usedRooms = new Set(manualRoomsUsed.get(slotKey) || []);
 
-    // ترتيب ثابت للأساتذة حتى تكون النتيجة قابلة للتكرار بين التشغيلات
     const professorKeys = [...profMap.keys()].sort();
 
+    // تجميع الأساتذة حسب المشرف لنعالج دكاترة نفس المشرف معًا
+    const bySupervisor = new Map(); // supervisorId -> professorKey[]
+    const noSupervisor = [];
+
     for (const profKey of professorKeys) {
+      const supId = professorSupervisorMap.get(profKey);
+
+      if (supId !== undefined) {
+        if (!bySupervisor.has(supId)) bySupervisor.set(supId, []);
+        bySupervisor.get(supId).push(profKey);
+      } else {
+        noSupervisor.push(profKey);
+      }
+    }
+
+    const processOne = (profKey) => {
       const profBundles = profMap.get(profKey);
       const representative = profBundles[0]?.groups?.[0];
       const professorId = representative?.professor_id ?? null;
@@ -846,6 +883,18 @@ async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
 
       let chosenRoom = manualRoom || null;
 
+      const supId = professorSupervisorMap.get(profKey);
+
+      // إن لم توجد قاعة يدوية: جرّب القاعة المفضّلة لنفس المشرف إن كانت متاحة الآن
+      if (!chosenRoom && supId !== undefined) {
+        const preferred = supervisorPreferredRoom.get(supId);
+
+        if (preferred && !usedRooms.has(preferred)) {
+          chosenRoom = preferred;
+        }
+      }
+
+      // وإلا: أي قاعة فاضية من المجمع
       if (!chosenRoom) {
         chosenRoom = roomPool.find((room) => !usedRooms.has(room));
 
@@ -859,11 +908,16 @@ async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
             message:
               "عدد الأساتذة في هذه الفترة أكبر من عدد القاعات النشطة المتاحة. أضف قاعات أو راجع الجدول.",
           });
-          continue;
+          return;
         }
 
-        usedRooms.add(chosenRoom);
+        // أول قاعة تُخصَّص لهذا المشرف تصبح قاعته المفضّلة لاحقًا
+        if (supId !== undefined && !supervisorPreferredRoom.has(supId)) {
+          supervisorPreferredRoom.set(supId, chosenRoom);
+        }
       }
+
+      usedRooms.add(chosenRoom);
 
       for (const bundle of profBundles) {
         for (const group of bundle.groups || []) {
@@ -879,6 +933,20 @@ async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
         period,
         roomNumber: chosenRoom,
       });
+    };
+
+    // نعالج دكاترة كل مشرف معًا أولًا (بترتيب ثابت حسب رقم المشرف)
+    const supervisorIdsSorted = [...bySupervisor.keys()].sort((a, b) => a - b);
+
+    for (const supId of supervisorIdsSorted) {
+      for (const profKey of bySupervisor.get(supId)) {
+        processOne(profKey);
+      }
+    }
+
+    // ثم باقي الأساتذة بلا مشرف معروف (حالات نادرة)
+    for (const profKey of noSupervisor) {
+      processOne(profKey);
     }
   }
 
@@ -887,6 +955,7 @@ async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
 
   return { assignments };
 }
+
 // ============================================================
 // Period Continuity Score
 // ============================================================
@@ -5258,6 +5327,10 @@ async function generatePlan(
   // COVERAGE CHECK
   // ==========================================================
 
+  // ==========================================================
+  // COVERAGE CHECK
+  // ==========================================================
+
   const unassignedBundles = bundles.filter(
     (bundle) => !bundleAssignments.has(bundle.key),
   );
@@ -5265,6 +5338,79 @@ async function generatePlan(
   const uncoveredProfessors = [
     ...new Set(unassignedBundles.map((bundle) => bundle.professor)),
   ];
+
+  console.log("========================================");
+  console.log("🔍 FINAL COVERAGE CHECK");
+  console.log("========================================");
+  console.log(
+    `📦 Bundles assigned: ${bundleAssignments.size}/${bundles.length}`,
+  );
+  console.log(`👨‍🏫 Professors in plan: ${totalProfessorsBeforeSplit}`);
+  console.log(`⚠️ Uncovered professors: ${uncoveredProfessors.length}`);
+
+  if (uncoveredProfessors.length) {
+    console.warn("⚠️ Uncovered professors list:", uncoveredProfessors);
+  }
+
+  console.log("📦 result length:", result.length);
+
+  for (const bundle of unassignedBundles) {
+    console.warn(
+      "❌ UNASSIGNED BUNDLE:",
+      bundle.professor,
+      bundle.key,
+      (bundle.groups || []).map((g) => ({ id: g.id, type: typeof g.id })),
+    );
+  }
+
+  // ==========================================================
+  // Room Assignment Engine (Conflict-Free)
+  // ==========================================================
+
+  const manualRoomRows = rooms; // room_assignments الموجودة مسبقًا لهذه الخطة (من getPlanContext)
+
+const roomAssignmentResult = await assignRoomsConflictFree({
+  bundles,
+  manualRoomRows,
+  conflicts,
+  professorAssignments, // ⬅️ إضافة جديدة: يمرّر الربط الفعلي أستاذ↔مشرف بعد التوزيع
+}); 
+
+  const autoRoomAssignments = roomAssignmentResult.assignments;
+
+  // تحديث room_number داخل result أيضًا (كانت مُعيَّنة فقط على group.room_number
+  // قبل أن يُبنى result، لذا نُطابقها الآن حسب الأستاذ + اليوم + الفترة)
+  if (autoRoomAssignments.length) {
+    const roomByProfDaySlot = new Map();
+
+    for (const item of autoRoomAssignments) {
+      const key = `${item.professorKey}|${item.date}|${normalizePeriod(item.period)}`;
+      roomByProfDaySlot.set(key, item.roomNumber);
+    }
+
+    for (const row of result) {
+      const key = `${getProfessorKey({
+        professor_id: row.professor_id,
+        professor_name: row.professor,
+      })}|${row.date}|${normalizePeriod(row.period)}`;
+
+      const roomNumber = roomByProfDaySlot.get(key);
+
+      if (roomNumber) {
+        row.room_number = roomNumber;
+      }
+    }
+  }
+
+  // ==========================================================
+  // Save
+  // ==========================================================
+
+  await saveAssignments(planId, result);
+  await saveAutoRoomAssignments(planId, autoRoomAssignments);
+
+  console.log(`💾 Assignments saved for plan ${planId}`);
+
 
   console.log("========================================");
   console.log("🔍 FINAL COVERAGE CHECK");

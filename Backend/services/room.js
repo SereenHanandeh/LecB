@@ -51,22 +51,11 @@ function normalizeCategories(categories) {
 // Create
 // ============================================================
 
-async function createRoom({ roomNumber, capacity, building }) {
+async function createRoom({ roomNumber, tag, categories }) {
   const number = String(roomNumber ?? "").trim();
 
   if (!number) {
     const err = new Error("رقم/اسم القاعة مطلوب");
-    err.status = 400;
-    throw err;
-  }
-
-  const parsedCapacity =
-    capacity === "" || capacity === null || capacity === undefined
-      ? null
-      : Number(capacity);
-
-  if (parsedCapacity !== null && !Number.isFinite(parsedCapacity)) {
-    const err = new Error("السعة يجب أن تكون رقمًا");
     err.status = 400;
     throw err;
   }
@@ -77,17 +66,11 @@ async function createRoom({ roomNumber, capacity, building }) {
 
     const result = await pool.query(
       `
-    INSERT INTO rooms (room_number, capacity, building, tag, categories)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *
-    `,
-      [
-        number,
-        parsedCapacity,
-        building ? String(building).trim() : null,
-        cleanTag,
-        cats,
-      ],
+      INSERT INTO rooms (room_number, tag, categories)
+      VALUES ($1, $2, $3)
+      RETURNING *
+      `,
+      [number, cleanTag, cats],
     );
     return result.rows[0];
   } catch (error) {
@@ -107,7 +90,7 @@ async function createRoom({ roomNumber, capacity, building }) {
 
 async function updateRoom(
   roomId,
-  { roomNumber, capacity, building, isActive },
+  { roomNumber, capacity, building, isActive, tag, categories },
 ) {
   const id = Number(roomId);
 
@@ -148,24 +131,28 @@ async function updateRoom(
 
   const nextIsActive =
     isActive === undefined ? current.is_active : Boolean(isActive);
+
   const nextTag =
     tag === undefined ? current.tag : tag ? String(tag).trim() : null;
 
-  const nextCategories = normalizeCategories(categories) ?? current.categories;
+  const nextCategories =
+    categories === undefined
+      ? current.categories
+      : (normalizeCategories(categories) ?? current.categories);
 
   try {
     const result = await pool.query(
       `
-    UPDATE rooms
-    SET room_number = $2,
-        capacity = $3,
-        building = $4,
-        is_active = $5,
-        tag = $6,
-        categories = $7
-    WHERE id = $1
-    RETURNING *
-    `,
+      UPDATE rooms
+      SET room_number = $2,
+          capacity = $3,
+          building = $4,
+          is_active = $5,
+          tag = $6,
+          categories = $7
+      WHERE id = $1
+      RETURNING *
+      `,
       [
         id,
         nextRoomNumber,
