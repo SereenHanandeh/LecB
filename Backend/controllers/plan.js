@@ -13,7 +13,7 @@ const {
   getAcceptedSupervisorStatsSvc,
   deletePlanSvc,
   saveRoomAssignments,
-  getRoomAssignments,
+  
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
