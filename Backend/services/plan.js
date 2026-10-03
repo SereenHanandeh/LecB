@@ -353,9 +353,101 @@ async function saveAffinities(planId, items = []) {
 // =====================================================
 
 const VALID_ROOMS = new Set([
-  ...Array.from({ length: 14 }, (_, i) => String(i + 1)),
-  ...Array.from({ length: 7 }, (_, i) => String(i + 40)),
+  ...Array.from({ length: 16 }, (_, i) => String(i + 1)), // 1..16 (6 = out, 15 = mentor)
+  ...Array.from({ length: 7 }, (_, i) => String(i + 40)), // 40..46
 ]);
+
+const normalizeRoomDate = (value) => {
+  const m = String(value ?? "")
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+};
+
+async function saveRoomAssignments(planId, items = []) {
+  await pool.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
+
+  if (!Array.isArray(items) || !items.length) return [];
+
+  const saved = [];
+
+  for (const item of items) {
+    try {
+      let professorId = Number(item.professorId ?? item.professor_id ?? NaN);
+      let professorName = String(
+        item.professorName ?? item.professor_name ?? item.name ?? "",
+      )
+        .trim()
+        .replace(/\s+/g, " ");
+
+      const roomNumber = String(
+        item.roomNumber ?? item.room_number ?? "",
+      ).trim();
+
+      if (!VALID_ROOMS.has(roomNumber)) {
+        console.warn("⚠️ Invalid room number:", roomNumber, item);
+        continue;
+      }
+
+      const assignmentDate = normalizeRoomDate(item.date);
+      const periodLabel =
+        String(item.period ?? item.period_label ?? "").trim() || null;
+
+      if (!Number.isInteger(professorId)) {
+        if (!professorName) continue;
+
+        const byName = await pool.query(
+          `SELECT id, name FROM professors
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+           ORDER BY id LIMIT 1`,
+          [professorName],
+        );
+        if (byName.rowCount === 0) continue;
+
+        professorId = Number(byName.rows[0].id);
+        professorName = byName.rows[0].name;
+      }
+
+      const professorCheck = await pool.query(
+        `SELECT id, name FROM professors WHERE id = $1`,
+        [professorId],
+      );
+      if (professorCheck.rowCount === 0) continue;
+
+      const canonicalName = String(professorCheck.rows[0].name || professorName)
+        .trim()
+        .replace(/\s+/g, " ");
+
+      const insertResult = await pool.query(
+        `
+        INSERT INTO room_assignments
+          (plan_id, professor_id, name, room_number, date, period_label)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (plan_id, professor_id, date, period_label)
+        DO UPDATE SET
+          name = EXCLUDED.name,
+          room_number = EXCLUDED.room_number
+        RETURNING *
+        `,
+        [
+          planId,
+          professorId,
+          canonicalName,
+          roomNumber,
+          assignmentDate,
+          periodLabel,
+        ],
+      );
+
+      saved.push(insertResult.rows[0]);
+    } catch (error) {
+      console.error("❌ Error saving room assignment:", item, error);
+    }
+  }
+
+  console.log(`🏠 Room assignments saved: ${saved.length}/${items.length}`);
+  return saved;
+}
 
 async function saveRoomAssignments(planId, items = []) {
   console.log("========================================");
@@ -480,17 +572,19 @@ async function getRoomAssignments(planId) {
   const result = await pool.query(
     `
     SELECT
-      ra.id,
-      ra.plan_id,
-      ra.professor_id,
-      ra.name,
-      ra.room_number,
-      p.name AS professor_name
-    FROM room_assignments ra
-    LEFT JOIN professors p
-      ON p.id = ra.professor_id
-    WHERE ra.plan_id = $1
-    ORDER BY ra.professor_id
+    SELECT
+  ra.id,
+  ra.plan_id,
+  ra.professor_id,
+  ra.name,
+  ra.room_number,
+  to_char(ra.date, 'YYYY-MM-DD') AS date,
+  ra.period_label,
+  p.name AS professor_name
+FROM room_assignments ra
+LEFT JOIN professors p ON p.id = ra.professor_id
+WHERE ra.plan_id = $1
+ORDER BY ra.professor_id, ra.date, ra.period_label
     `,
     [planId],
   );
@@ -711,7 +805,7 @@ async function fetchPlan(planId) {
   // ---------------------------------------------------
 
   const assignmentsResult = await pool.query(
-  `
+    `
   SELECT
     a.id,
     a.plan_id,
@@ -753,20 +847,18 @@ async function fetchPlan(planId) {
     ON p.id = sg.professor_id
 
   -- ✅ ربط القاعة عبر الأستاذ + نفس الخطة
-  LEFT JOIN room_assignments ra
-    ON ra.professor_id = sg.professor_id
-    AND ra.plan_id = a.plan_id
-
-  WHERE a.plan_id = $1
-
-  ORDER BY
-    sg.date,
-    sg.period_label,
-    sg.id,
-    a.id
+  LEFT JOIN LATERAL (
+  SELECT r.room_number
+  FROM room_assignments r
+  WHERE r.plan_id = a.plan_id
+    AND r.professor_id = sg.professor_id
+    AND (r.date IS NULL OR (r.date = sg.date AND r.period_label = sg.period_label))
+  ORDER BY (r.date IS NULL) ASC, r.id
+  LIMIT 1
+) ra ON TRUE
   `,
-  [planId]
-);
+    [planId],
+  );
 
   return {
     ...ctx,
@@ -1181,8 +1273,10 @@ async function deletePlanSvc(planId) {
       `,
       [planId],
     );
+    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [
+      planId,
+    ]);
 
-    // حذف الخطة نفسها
     const deletedResult = await client.query(
       `
       DELETE FROM plans
