@@ -1,5 +1,7 @@
 const pool = require("../models/db");
 
+
+const { getActiveRoomNumbers } = require("./rooms.js");
 // =====================================================
 // إنشاء خطة جديدة
 // =====================================================
@@ -347,23 +349,6 @@ async function saveAffinities(planId, items = []) {
   return saved;
 }
 
-// =====================================================
-// Room Assignments
-// Professor -> Room
-// =====================================================
-
-const VALID_ROOMS = new Set([
-  ...Array.from({ length: 16 }, (_, i) => String(i + 1)), // 1..16 (6 = out, 15 = mentor)
-  "40",
-  "42",
-  "46",
-  "47",
-  "48",
-  "49",
-  "100",
-  "101",
-  "102", // خاصة
-]);
 
 const normalizeRoomDate = (value) => {
   const m = String(value ?? "")
@@ -377,6 +362,8 @@ async function saveRoomAssignments(planId, items = []) {
   await pool.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
 
   if (!Array.isArray(items) || !items.length) return [];
+
+  const validRoomNumbers = await getActiveRoomNumbers();
 
   const saved = [];
 
@@ -393,7 +380,7 @@ async function saveRoomAssignments(planId, items = []) {
         item.roomNumber ?? item.room_number ?? "",
       ).trim();
 
-      if (!VALID_ROOMS.has(roomNumber)) {
+      if (!validRoomNumbers.has(roomNumber)) {
         console.warn("⚠️ Invalid room number:", roomNumber, item);
         continue;
       }
@@ -481,6 +468,39 @@ async function getRoomAssignments(planId) {
   );
 
   return result.rows;
+}
+
+// Auto Room Assignments (من محرك التوزيع — Conflict-Free)
+// =====================================================
+
+async function saveAutoRoomAssignments(planId, assignments = []) {
+  if (!Array.isArray(assignments) || !assignments.length) return;
+
+  for (const item of assignments) {
+    if (item.professorId == null) continue;
+
+    await pool.query(
+      `
+      INSERT INTO room_assignments
+        (plan_id, professor_id, name, room_number, date, period_label)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (plan_id, professor_id, date, period_label)
+      DO UPDATE SET
+        room_number = EXCLUDED.room_number,
+        name = EXCLUDED.name
+      `,
+      [
+        planId,
+        item.professorId,
+        item.professorName ?? null,
+        item.roomNumber,
+        item.date,
+        item.period,
+      ],
+    );
+  }
+
+  console.log(`🏠 Auto room assignments saved: ${assignments.length}`);
 }
 // =====================================================
 // Update Plan Status (Accept / Reject)

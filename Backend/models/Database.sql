@@ -315,3 +315,27 @@ ON assignments(supervisor_id);
 CREATE INDEX IF NOT EXISTS
 idx_duty_pool_plan
 ON duty_pool(plan_window_id);
+
+-- ============================================================
+-- Migration: rooms master table + room-conflict safety net
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS rooms (
+  id SERIAL PRIMARY KEY,
+  room_number VARCHAR(20) NOT NULL UNIQUE,
+  capacity INTEGER,
+  building VARCHAR(100),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO rooms (room_number) VALUES
+  ('1'),('2'),('3'),('4'),('5'),('6'),('7'),('8'),('9'),('10'),
+  ('11'),('12'),('13'),('14'),('15'),('16'),
+  ('40'),('42'),('46'),('47'),('48'),('49'),
+  ('100'),('101'),('102')
+ON CONFLICT (room_number) DO NOTHING;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_room_assignments_room_slot
+  ON room_assignments (plan_id, room_number, date, period_label)
+  WHERE date IS NOT NULL AND period_label IS NOT NULL;

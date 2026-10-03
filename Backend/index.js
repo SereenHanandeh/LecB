@@ -12,6 +12,9 @@ const initializeDatabase = require("./models/initDb");
 const excelRoutes = require("./routes/excel.js");
 const planRouter = require("./routes/plan.js");
 const supervisorRouter = require("./routes/supervisor.js");
+const roomsRouter = require("./routes/rooms.js");
+
+
 
 const app = express();
 
@@ -103,6 +106,7 @@ app.get("/", (req, res) => {
   });
 });
 
+app.use("/rooms", roomsRouter);
 // =====================================================
 // Database Test
 // =====================================================

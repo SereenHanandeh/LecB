@@ -1,5 +1,5 @@
-const { getPlanContext, saveAssignments, getDutyPool } = require("./plan.js");
-
+const { getPlanContext, saveAssignments, getDutyPool, saveAutoRoomAssignments } = require("./plan.js");
+const { listRooms } = require("./rooms.js");
 const seededShuffle = require("../utils/rng.js");
 
 const { getPeriodRank, normalizePeriod } = require("../utils/distribution.js");
@@ -745,6 +745,148 @@ function getProfessorConsecutiveScore(supervisor, professorBundles) {
   return score;
 }
 
+// ============================================================
+// ROOM ASSIGNMENT ENGINE (CONFLICT-FREE)
+// ============================================================
+//
+// الهدف: نفس القاعة ما تُعطى لمحاضرتين مختلفتين بنفس اليوم
+// والفترة، بغض النظر عن الأستاذ أو المشرف.
+//
+// الأولوية: أي قاعة محجوزة يدويًا مسبقًا (room_assignments
+// الحالية لهذه الخطة) تبقى كما هي وتُستبعد من القاعات
+// المتاحة لباقي الأساتذة بنفس الفترة.
+//
+// إذا عدد الأساتذة بنفس الفترة أكبر من عدد القاعات النشطة
+// المتاحة، يُسجَّل Conflict من نوع ROOM_SHORTAGE_FOR_SLOT
+// بدل ما يفشل التوزيع بصمت.
+// ============================================================
+
+function buildRoomSlotKey(day, period) {
+  return `${day}|${normalizePeriod(period)}`;
+}
+
+async function assignRoomsConflictFree({ bundles, manualRoomRows, conflicts }) {
+  console.log("========================================");
+  console.log("🏠 STARTING ROOM ASSIGNMENT ENGINE");
+  console.log("========================================");
+
+  const activeRooms = await listRooms({ onlyActive: true });
+
+  const roomPool = activeRooms
+    .map((r) => String(r.room_number))
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+
+  if (!roomPool.length) {
+    console.warn("⚠️ No active rooms configured. Skipping room assignment.");
+    return { assignments: [] };
+  }
+
+  // 1) فهرسة الكتل حسب الفترة (يوم|فترة) ثم حسب الأستاذ
+  const slotMap = new Map(); // slotKey -> Map(professorKey -> bundle[])
+
+  for (const bundle of bundles) {
+    const representative = bundle.groups?.[0];
+    if (!representative) continue;
+
+    const day = dateISO(representative.date);
+    const period = normalizePeriod(representative.period_label);
+    if (!day || !period) continue;
+
+    const slotKey = buildRoomSlotKey(day, period);
+
+    if (!slotMap.has(slotKey)) slotMap.set(slotKey, new Map());
+
+    const profMap = slotMap.get(slotKey);
+    const profKey = bundle.professorKey;
+
+    if (!profMap.has(profKey)) profMap.set(profKey, []);
+    profMap.get(profKey).push(bundle);
+  }
+
+  // 2) القاعات المحجوزة يدويًا مسبقًا لكل فترة
+  const manualBySlot = new Map(); // slotKey -> Map(professorId -> roomNumber)
+  const manualRoomsUsed = new Map(); // slotKey -> Set(roomNumber)
+
+  for (const row of manualRoomRows || []) {
+    const day = dateISO(row.date);
+    const period = normalizePeriod(row.period_label);
+    const roomNumber = String(row.room_number ?? "").trim();
+    const professorId = Number(row.professor_id);
+
+    if (!day || !period || !roomNumber || !Number.isFinite(professorId)) continue;
+
+    const slotKey = buildRoomSlotKey(day, period);
+
+    if (!manualBySlot.has(slotKey)) manualBySlot.set(slotKey, new Map());
+    manualBySlot.get(slotKey).set(professorId, roomNumber);
+
+    if (!manualRoomsUsed.has(slotKey)) manualRoomsUsed.set(slotKey, new Set());
+    manualRoomsUsed.get(slotKey).add(roomNumber);
+  }
+
+  // 3) التوزيع الفعلي
+  const assignments = []; // { professorId, professorKey, professorName, date, period, roomNumber }
+
+  for (const [slotKey, profMap] of slotMap) {
+    const [day, period] = slotKey.split("|");
+    const usedRooms = new Set(manualRoomsUsed.get(slotKey) || []);
+
+    // ترتيب ثابت للأساتذة حتى تكون النتيجة قابلة للتكرار بين التشغيلات
+    const professorKeys = [...profMap.keys()].sort();
+
+    for (const profKey of professorKeys) {
+      const profBundles = profMap.get(profKey);
+      const representative = profBundles[0]?.groups?.[0];
+      const professorId = representative?.professor_id ?? null;
+
+      const manualRoom =
+        professorId != null
+          ? manualBySlot.get(slotKey)?.get(Number(professorId))
+          : null;
+
+      let chosenRoom = manualRoom || null;
+
+      if (!chosenRoom) {
+        chosenRoom = roomPool.find((room) => !usedRooms.has(room));
+
+        if (!chosenRoom) {
+          conflicts.push({
+            type: "ROOM_SHORTAGE_FOR_SLOT",
+            date: day,
+            period,
+            professor: profBundles[0]?.professor ?? "",
+            professor_id: professorId,
+            message:
+              "عدد الأساتذة في هذه الفترة أكبر من عدد القاعات النشطة المتاحة. أضف قاعات أو راجع الجدول.",
+          });
+          continue;
+        }
+
+        usedRooms.add(chosenRoom);
+      }
+
+      for (const bundle of profBundles) {
+        for (const group of bundle.groups || []) {
+          group.room_number = chosenRoom;
+        }
+      }
+
+      assignments.push({
+        professorId,
+        professorKey: profKey,
+        professorName: profBundles[0]?.professor ?? "",
+        date: day,
+        period,
+        roomNumber: chosenRoom,
+      });
+    }
+  }
+
+  console.log(`🏠 Rooms assigned: ${assignments.length}`);
+  console.log("========================================");
+
+  return { assignments };
+}
 // ============================================================
 // Period Continuity Score
 // ============================================================
@@ -5153,7 +5295,7 @@ async function generatePlan(
   // ==========================================================
 
   await saveAssignments(planId, result);
-
+await saveAutoRoomAssignments(planId, autoRoomAssignments);
   console.log(`💾 Assignments saved for plan ${planId}`);
 
   // ==========================================================
@@ -5672,4 +5814,6 @@ module.exports = {
   generatePlan,
 
   buildDailyPoolsForPlan,
+
+  buildRoomSlotKey,
 };
