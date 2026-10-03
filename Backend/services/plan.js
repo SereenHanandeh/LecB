@@ -354,7 +354,8 @@ async function saveAffinities(planId, items = []) {
 
 const VALID_ROOMS = new Set([
   ...Array.from({ length: 16 }, (_, i) => String(i + 1)), // 1..16 (6 = out, 15 = mentor)
-  ...Array.from({ length: 7 }, (_, i) => String(i + 40)), // 40..46
+  "40", "42", "46", "47", "48", "49",
+  "100", "101", "102", // خاصة
 ]);
 
 const normalizeRoomDate = (value) => {
