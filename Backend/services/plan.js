@@ -481,47 +481,57 @@ async function getRoomAssignments(planId) {
 async function saveAutoRoomAssignments(planId, assignments = []) {
   if (!Array.isArray(assignments) || !assignments.length) return;
 
+  let saved = 0;
+  let failed = 0;
+
   for (const item of assignments) {
     if (item.professorId == null) continue;
 
-    await pool.query(
-      `
-      INSERT INTO room_assignments
-        (plan_id, professor_id, name, room_number, date, period_label)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (plan_id, professor_id, date, period_label)
-      DO UPDATE SET
-        room_number = EXCLUDED.room_number,
-        name = EXCLUDED.name
-      `,
-      [
-        planId,
-        item.professorId,
-        item.professorName ?? null,
-        item.roomNumber,
-        item.date,
-        item.period,
-      ],
-    );
+    try {
+      await pool.query(
+        `
+        INSERT INTO room_assignments
+          (plan_id, professor_id, name, room_number, date, period_label)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (plan_id, professor_id, date, period_label)
+        DO UPDATE SET
+          room_number = EXCLUDED.room_number,
+          name = EXCLUDED.name
+        `,
+        [
+          planId,
+          item.professorId,
+          item.professorName ?? null,
+          item.roomNumber,
+          item.date,
+          item.period,
+        ],
+      );
+
+      saved++;
+    } catch (error) {
+      failed++;
+      console.error(
+        `❌ Failed to save room assignment for professor ${item.professorId} (room "${item.roomNumber}"):`,
+        error.message,
+      );
+    }
   }
 
-  console.log(`🏠 Auto room assignments saved: ${assignments.length}`);
+  console.log(`🏠 Auto room assignments saved: ${saved}/${assignments.length} (failed: ${failed})`);
 }
 async function replaceRoomAssignments(planId, inputRows = []) {
   if (!Array.isArray(inputRows) || !inputRows.length) return;
 
-  // إزالة التكرار (نفس القاعة بنفس التاريخ والفترة)
   const seen = new Set();
   const uniqueRows = [];
 
   for (const r of inputRows) {
     const k = `${r.date}|${r.period_label}|${r.room_number}`;
-
     if (seen.has(k)) {
       console.warn("⚠️ Duplicate room slot skipped:", k, r.name);
       continue;
     }
-
     seen.add(k);
     uniqueRows.push(r);
   }
@@ -530,33 +540,32 @@ async function replaceRoomAssignments(planId, inputRows = []) {
 
   try {
     await client.query("BEGIN");
+    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [planId]);
 
-    await client.query(`DELETE FROM room_assignments WHERE plan_id = $1`, [
-      planId,
-    ]);
+    let saved = 0;
+    let failed = 0;
 
     for (const r of uniqueRows) {
-      await client.query(
-        `
-        INSERT INTO room_assignments
-          (plan_id, professor_id, name, room_number, date, period_label, pinned)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (plan_id, professor_id, date, period_label)
-        DO UPDATE SET room_number = EXCLUDED.room_number, pinned = EXCLUDED.pinned
-        `,
-        [
-          planId,
-          r.professor_id,
-          r.name ?? "",
-          r.room_number,
-          r.date,
-          r.period_label,
-          r.pinned === true,
-        ],
-      );
+      try {
+        await client.query(
+          `
+          INSERT INTO room_assignments
+            (plan_id, professor_id, name, room_number, date, period_label, pinned)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (plan_id, professor_id, date, period_label)
+          DO UPDATE SET room_number = EXCLUDED.room_number, pinned = EXCLUDED.pinned
+          `,
+          [planId, r.professor_id, r.name ?? "", r.room_number, r.date, r.period_label, r.pinned === true],
+        );
+        saved++;
+      } catch (error) {
+        failed++;
+        console.error(`❌ Failed to insert room row (room "${r.room_number}"):`, error.message);
+      }
     }
 
     await client.query("COMMIT");
+    console.log(`🏠 Room assignments replaced: ${saved}/${uniqueRows.length} (failed: ${failed})`);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
