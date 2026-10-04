@@ -8,9 +8,18 @@ async function listRooms({ onlyActive = false } = {}) {
   const result = await pool.query(
     `
     SELECT id, room_number, capacity, building, tag, categories, is_active, created_at
-FROM rooms
+    FROM rooms
     ${onlyActive ? "WHERE is_active = TRUE" : ""}
-    ORDER BY NULLIF(regexp_replace(room_number, '\D', '', 'g'), '')::int NULLS LAST, room_number
+    ORDER BY
+      LPAD(
+        COALESCE(
+          NULLIF(regexp_replace(room_number, '\\D', '', 'g'), ''),
+          '9999999999'
+        ),
+        10,
+        '0'
+      ),
+      room_number
     `,
   );
 
