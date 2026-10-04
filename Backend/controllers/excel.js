@@ -147,6 +147,8 @@ const COLUMN_MAP = {
 
   professor: ["prof", "professor", "أستاذ", "اسم الأستاذ", "اسم الاستاذ"],
 
+   phone: ["جوال", "الجوال", "رقم الجوال", "phone", "mobile"],
+
   course: [
     "course",
     "course_desc",
@@ -424,6 +426,7 @@ async function processExcel(buffer) {
         timeFrom,
         timeTo,
         professorName,
+          phone: row.phone ? String(row.phone).trim() : null, 
         courseName,
         crn,
         courseIdText,
@@ -457,34 +460,47 @@ async function processExcel(buffer) {
     // 3. Create missing professors
     // =================================================
 
-    const uniqueProfessorNames = [
-      ...new Set(
-        normalizedRows.map((row) => row.professorName).filter(Boolean),
-      ),
-    ];
+    // =================================================
+// 3. أسماء الأساتذة الفريدة + هاتف كل واحد (أول قيمة غير فارغة تُستخدم)
+// =================================================
 
-    const newProfessorNames = uniqueProfessorNames.filter(
-      (name) => !professorCache.has(name),
-    );
+const professorPhoneMap = new Map();
 
-    console.log(`👨‍🏫 New professors: ${newProfessorNames.length}`);
+for (const row of normalizedRows) {
+  if (!row.professorName) continue;
 
-    for (const professorName of newProfessorNames) {
-      const result = await client.query(
-        `
-          INSERT INTO professors(name)
-          VALUES($1)
-          ON CONFLICT(name)
-          DO UPDATE
-          SET name = EXCLUDED.name
-          RETURNING id
-          `,
-        [professorName],
-      );
+  if (row.phone && !professorPhoneMap.has(row.professorName)) {
+    professorPhoneMap.set(row.professorName, row.phone);
+  }
+}
 
-      professorCache.set(professorName, result.rows[0].id);
-    }
+const uniqueProfessorNames = [
+  ...new Set(
+    normalizedRows.map((row) => row.professorName).filter(Boolean),
+  ),
+];
 
+console.log(`👨‍🏫 Professors in file: ${uniqueProfessorNames.length}`);
+
+for (const professorName of uniqueProfessorNames) {
+  const phone = professorPhoneMap.get(professorName) ?? null;
+
+  const result = await client.query(
+    `
+      INSERT INTO professors(name, phone)
+      VALUES($1, $2)
+      ON CONFLICT(name)
+      DO UPDATE
+      SET
+        name = EXCLUDED.name,
+        phone = COALESCE(EXCLUDED.phone, professors.phone)
+      RETURNING id
+      `,
+    [professorName, phone],
+  );
+
+  professorCache.set(professorName, result.rows[0].id);
+}
     // =================================================
     // 4. Load existing courses
     // =================================================

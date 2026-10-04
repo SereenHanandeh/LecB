@@ -625,7 +625,8 @@ async function getPlanContext(planId) {
     `
   SELECT
     sg.*,
-    p.name AS professor_name
+    p.name AS professor_name,
+      p.phone AS professor_phone   
   FROM session_groups sg
   LEFT JOIN professors p
     ON p.id = sg.professor_id
@@ -797,6 +798,7 @@ async function fetchPlan(planId) {
 
       sg.professor_id,
       p.name AS professor_name,
+      p.phone AS professor_phone, 
 
       ra.room_number
 

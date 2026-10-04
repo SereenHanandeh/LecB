@@ -111,6 +111,10 @@ function importExcel(filePath) {
       row["professor"] ??
       "";
 
+       const phone =
+    row["جوال"] ?? row["الجوال"] ?? row["رقم الجوال"] ??
+    row["Phone"] ?? row["phone"] ?? "";
+
     const date =
       row["التاريخ ميلادي"] ??
       row["Date"] ??
@@ -141,6 +145,8 @@ function importExcel(filePath) {
       crn: String(crn).trim(),
 
       professor_name: String(professor).trim(),
+
+      phone: String(phone).trim(),
 
       date,
 
@@ -434,6 +440,7 @@ function attachGroupToSupervisor(supervisor, group, result) {
     course_name: group.course_name ?? "",
 
     professor: group.professor_name || group.professor || "",
+    professor_phone: group.professor_phone ?? group.phone ?? "",
     professor_id: group.professor_id ?? null,
 
     room_number: group.room_number ?? null,
@@ -3564,6 +3571,7 @@ function minimumSplitFallback({
             crn: group.crn,
             course_name: group.course_name ?? "",
             professor: group.professor_name || group.professor || "",
+             professor_phone: group.professor_phone ?? group.phone ?? "", 
             room_number: group.room_number ?? null,
             professor_id: group.professor_id ?? null,
             date: dateISO(group.date),
@@ -3768,6 +3776,7 @@ function finalFairnessSplit({
               crn: group.crn,
               course_name: group.course_name ?? "",
               professor: group.professor_name || group.professor || "",
+               professor_phone: group.professor_phone ?? group.phone ?? "", 
               room_number: group.room_number ?? null,
               professor_id: group.professor_id ?? null,
               date: dateISO(group.date),
