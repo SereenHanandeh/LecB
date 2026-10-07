@@ -13,7 +13,8 @@ const {
   getAcceptedSupervisorStatsSvc,
   deletePlanSvc,
   saveRoomAssignments,
-  saveAutoRoomAssignments,
+  deleteAssignmentsSvc,
+  moveAssignmentsToPlanSvc,
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
@@ -772,6 +773,86 @@ async function getAcceptedSupervisorStats(req, res) {
   }
 }
 
+
+// =====================================================
+// Delete Assignments (Bulk)
+// =====================================================
+
+async function deleteAssignments(req, res) {
+  try {
+    const { planId } = req.params;
+    const { sessionGroupIds } = req.body;
+
+    if (!planId) {
+      return res.status(400).json({ success: false, error: "planId is required" });
+    }
+
+    if (!Array.isArray(sessionGroupIds) || !sessionGroupIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionGroupIds must be a non-empty array",
+      });
+    }
+
+    const result = await deleteAssignmentsSvc(planId, sessionGroupIds);
+
+    return res.json({
+      success: true,
+      message: "Assignments deleted successfully",
+      data: result,
+    });
+  } catch (err) {
+    return handleError(res, err, "Error deleting assignments");
+  }
+}
+
+// =====================================================
+// Move Assignments To Another Plan (Bulk)
+// =====================================================
+
+async function moveAssignmentsToPlan(req, res) {
+  try {
+    const { planId } = req.params;
+    const { sessionGroupIds, targetPlanId } = req.body;
+
+    if (!planId) {
+      return res.status(400).json({ success: false, error: "planId is required" });
+    }
+
+    if (!Array.isArray(sessionGroupIds) || !sessionGroupIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionGroupIds must be a non-empty array",
+      });
+    }
+
+    if (!targetPlanId) {
+      return res.status(400).json({
+        success: false,
+        error: "targetPlanId is required",
+      });
+    }
+
+    const result = await moveAssignmentsToPlanSvc(
+      planId,
+      targetPlanId,
+      sessionGroupIds,
+    );
+
+    return res.json({
+      success: true,
+      message: "Assignments moved successfully",
+      data: result,
+    });
+  } catch (err) {
+    if (err.status === 400 || err.status === 404) {
+      return res.status(err.status).json({ success: false, error: err.message });
+    }
+
+    return handleError(res, err, "Error moving assignments");
+  }
+}
+
 // =====================================================
 // Exports
 // =====================================================
@@ -792,4 +873,6 @@ module.exports = {
   updateStatus,
   deletePlan,
   getAcceptedSupervisorStats,
+  deleteAssignments,
+  moveAssignmentsToPlan
 };

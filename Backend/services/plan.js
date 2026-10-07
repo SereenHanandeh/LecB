@@ -1326,6 +1326,134 @@ async function getAcceptedSupervisorStatsSvc() {
   return rows;
 }
 
+
+// =====================================================
+// Delete Assignments (Bulk)
+// =====================================================
+
+async function deleteAssignmentsSvc(planId, sessionGroupIds = []) {
+  const ids = sessionGroupIds.map(Number).filter(Number.isInteger);
+
+  if (!ids.length) {
+    return { deleted: 0, sessionGroupIds: [] };
+  }
+
+  const result = await pool.query(
+    `
+    DELETE FROM assignments
+    WHERE plan_id = $1
+      AND session_group_id = ANY($2::int[])
+    RETURNING session_group_id
+    `,
+    [planId, ids],
+  );
+
+  await pool.query(
+    `
+    DELETE FROM assignment_locks
+    WHERE plan_id = $1
+      AND session_group_id = ANY($2::int[])
+    `,
+    [planId, ids],
+  );
+
+  return {
+    deleted: result.rowCount,
+    sessionGroupIds: result.rows.map((r) => r.session_group_id),
+  };
+}
+
+// =====================================================
+// Move Assignments To Another Plan (Bulk)
+// =====================================================
+
+async function moveAssignmentsToPlanSvc(fromPlanId, targetPlanId, sessionGroupIds = []) {
+  const ids = sessionGroupIds.map(Number).filter(Number.isInteger);
+
+  if (!ids.length) {
+    return { moved: 0, skipped: [] };
+  }
+
+  if (String(fromPlanId) === String(targetPlanId)) {
+    const err = new Error("لا يمكن نقل الصفوف لنفس الخطة.");
+    err.status = 400;
+    throw err;
+  }
+
+  const targetCheck = await pool.query(`SELECT id FROM plans WHERE id = $1`, [
+    targetPlanId,
+  ]);
+
+  if (!targetCheck.rowCount) {
+    const err = new Error("الخطة الهدف غير موجودة.");
+    err.status = 404;
+    throw err;
+  }
+
+  const client = await pool.connect();
+  let moved = 0;
+  const skipped = [];
+
+  try {
+    await client.query("BEGIN");
+
+    for (const sessionGroupId of ids) {
+      const current = await client.query(
+        `
+        SELECT supervisor_id
+        FROM assignments
+        WHERE plan_id = $1 AND session_group_id = $2
+        LIMIT 1
+        `,
+        [fromPlanId, sessionGroupId],
+      );
+
+      if (!current.rowCount) {
+        skipped.push(sessionGroupId);
+        continue;
+      }
+
+      const supervisorId = current.rows[0].supervisor_id;
+
+      await client.query(
+        `
+        DELETE FROM assignments
+        WHERE plan_id = $1 AND session_group_id = $2
+        `,
+        [fromPlanId, sessionGroupId],
+      );
+
+      await client.query(
+        `
+        DELETE FROM assignment_locks
+        WHERE plan_id = $1 AND session_group_id = $2
+        `,
+        [fromPlanId, sessionGroupId],
+      );
+
+      await client.query(
+        `
+        INSERT INTO assignments (plan_id, session_group_id, supervisor_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+        `,
+        [targetPlanId, sessionGroupId, supervisorId],
+      );
+
+      moved++;
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { moved, skipped };
+}
+
 module.exports = {
   createPlanRow,
 
@@ -1356,4 +1484,7 @@ module.exports = {
   saveAutoRoomAssignments,
   deletePlanSvc,
   getAcceptedSupervisorStatsSvc,
+
+   deleteAssignmentsSvc,
+  moveAssignmentsToPlanSvc,
 };
