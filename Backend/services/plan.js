@@ -908,7 +908,7 @@ async function clearAssignments(planId) {
 
 async function moveAssignmentSvc(
   planId,
-  { fromSupervisorId, toSupervisorId, sessionGroupId },
+  { fromSupervisorId, toSupervisorId, sessionGroupId ,force = false},
 ) {
   const groupId = Number(sessionGroupId);
   const fromId = Number(fromSupervisorId);
@@ -973,20 +973,15 @@ async function moveAssignmentSvc(
     [planId, professorId],
   );
 
-  if (affinityResult.rowCount > 0) {
-    const affinitySupervisorId = Number(affinityResult.rows[0].supervisor_id);
+ if (affinityResult.rowCount > 0) {
+  const affinitySupervisorId = Number(affinityResult.rows[0].supervisor_id);
 
-    console.log("🔗 Affinity check:");
-    console.log("Professor ID:", professorId);
-    console.log("Affinity Supervisor:", affinitySupervisorId);
-    console.log("Requested Supervisor:", toId);
-
-    if (affinitySupervisorId !== toId) {
-      throw new Error(
-        `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`,
-      );
-    }
+  if (affinitySupervisorId !== toId && !force) {
+    throw new Error(
+      `Professor is assigned to supervisor ${affinitySupervisorId} by affinity`,
+    );
   }
+}
 
   // =====================================================
   // 4️⃣ التأكد من الـ Assignment الحالي

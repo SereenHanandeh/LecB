@@ -523,7 +523,7 @@ async function moveAssignment(req, res) {
   try {
     const { planId } = req.params;
 
-    const { fromSupervisorId, toSupervisorId, sessionGroupId } = req.body;
+    const { fromSupervisorId, toSupervisorId, sessionGroupId ,force } = req.body;
 
     console.log("====================================");
     console.log("🔄 MOVE ASSIGNMENT REQUEST");
@@ -575,11 +575,12 @@ async function moveAssignment(req, res) {
 
     console.log("✅ Controller validation passed");
 
-    await moveAssignmentSvc(planId, {
-      fromSupervisorId: parsedFromSupervisorId,
-      toSupervisorId: parsedToSupervisorId,
-      sessionGroupId: parsedSessionGroupId,
-    });
+   await moveAssignmentSvc(planId, {
+  fromSupervisorId: parsedFromSupervisorId,
+  toSupervisorId: parsedToSupervisorId,
+  sessionGroupId: parsedSessionGroupId,
+  force: force === true,
+});
 
     console.log("✅ Assignment moved successfully");
 
