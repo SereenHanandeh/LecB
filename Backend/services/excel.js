@@ -20,7 +20,35 @@ const xlsx = require("xlsx");
 
 const ALLOW_SAME_PERIOD_MULTIPLE_PROFESSORS = true;
 
+// يحوّل أي صيغة وقت إلى HH:MM:00 بنظام 24 ساعة
+// الأوقات بدون AM/PM تُعتبر مسائية (كل فترات النظام مسائية)
+function normalizeTime24(value) {
+  if (value === null || value === undefined) return "";
 
+  const str = String(value).trim();
+  if (!str) return "";
+
+  const match = str.match(
+    /^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp]\.?[Mm]\.?|ص|م)?$/,
+  );
+
+  if (!match) return str; // صيغة غير معروفة: اتركها كما هي
+
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const marker = (match[3] || "").toLowerCase().replace(/\./g, "");
+
+  if (marker === "am" || marker === "ص") {
+    if (hour === 12) hour = 0;
+  } else if (marker === "pm" || marker === "م") {
+    if (hour < 12) hour += 12;
+  } else if (hour < 12) {
+    // بدون علامة: نعتبره مسائيًا
+    hour += 12;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${minute}:00`;
+}
 // ============================================================
 // Excel Import
 // ============================================================
@@ -151,9 +179,8 @@ function importExcel(filePath) {
 
       lecture: String(lecture).trim(),
 
-      time_from: String(timeFrom).trim(),
-
-      time_to: String(timeTo).trim(),
+      time_from: normalizeTime24(timeFrom),
+      time_to: normalizeTime24(timeTo),
 
       required_supervisors: 1,
 
@@ -2560,7 +2587,6 @@ function canSingleBundleFitSupervisor(supervisor, day, period) {
   return true;
 }
 
-
 function exclusiveProfessorSlots(professor) {
   const out = [];
   for (const b of professor.bundles) {
@@ -2621,7 +2647,6 @@ function countGapDays(slots) {
   }
   return gapDays;
 }
-
 
 function assignExclusiveSupervisorsPerProfessor({
   professorGroups,
@@ -6021,7 +6046,6 @@ function buildDailyPoolsForPlan(days, supervisorIds) {
   return pools;
 }
 
-
 // ============================================================
 // Exports
 // ============================================================
@@ -6036,6 +6060,4 @@ module.exports = {
   buildRoomSlotKey,
 
   exclusiveProfessorSlots,
-
-
 };
