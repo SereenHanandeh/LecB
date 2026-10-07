@@ -31,72 +31,52 @@ function excelDateToJSDate(value) {
 // =====================================================
 // Normalize Excel Time
 // =====================================================
-
+// يحوّل أي قيمة وقت إلى HH:MM:00 بنظام 24 ساعة
+// بدون AM/PM تُعتبر مسائية (كل فترات النظام مسائية)
 function normalizeTime(value) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
+  if (value === null || value === undefined || value === "") return null;
 
-  // ExcelJS may return a Date object
-  if (value instanceof Date) {
-    const hours = String(value.getHours()).padStart(2, "0");
-    const minutes = String(value.getMinutes()).padStart(2, "0");
-    const seconds = String(value.getSeconds()).padStart(2, "0");
+  const pad = (n) => String(n).padStart(2, "0");
 
-    return `${hours}:${minutes}:${seconds}`;
-  }
-
-  // Excel may return fraction of a day
+  // 1) كسر يوم من Excel (مثل 0.7083 = 5:00 PM)
   if (typeof value === "number") {
-    let totalSeconds = Math.round(value * 24 * 60 * 60);
-
-    totalSeconds = totalSeconds % (24 * 60 * 60);
-
-    const hours = Math.floor(totalSeconds / 3600);
-
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    
-
-    const seconds = totalSeconds % 60;
-
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
-      2,
-      "0",
-    )}:${String(seconds).padStart(2, "0")}`;
+    const totalMinutes = Math.round((value % 1) * 24 * 60);
+    let hour = Math.floor(totalMinutes / 60) % 24;
+    const minute = totalMinutes % 60;
+    if (hour < 12) hour += 12;
+    return `${pad(hour)}:${pad(minute)}:00`;
   }
 
-  // Excel may return a string
-  if (typeof value === "string") {
-    const text = value.trim();
-
-    // HH:MM or HH:MM:SS
-    const match = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-
-    if (match) {
-      const hours = String(Number(match[1])).padStart(2, "0");
-
-      const minutes = match[2];
-
-      const seconds = match[3] || "00";
-
-      return `${hours}:${minutes}:${seconds}`;
-    }
-
-    // Try parsing date-like string
-    const parsed = new Date(text);
-
-    if (!Number.isNaN(parsed.getTime())) {
-      const hours = String(parsed.getHours()).padStart(2, "0");
-
-      const minutes = String(parsed.getMinutes()).padStart(2, "0");
-
-      const seconds = String(parsed.getSeconds()).padStart(2, "0");
-
-      return `${hours}:${minutes}:${seconds}`;
-    }
+  // 2) كائن Date (ExcelJS يرجعه أحيانًا للخلايا الزمنية، بتوقيت UTC)
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    let hour = value.getUTCHours();
+    const minute = value.getUTCMinutes();
+    if (hour < 12) hour += 12;
+    return `${pad(hour)}:${pad(minute)}:00`;
   }
 
-  return null;
+  // 3) نص
+  const str = String(value).trim();
+  const match = str.match(
+    /^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp]\.?[Mm]\.?|ص|م)?$/,
+  );
+
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const marker = (match[3] || "").toLowerCase().replace(/\./g, "");
+
+  if (marker === "am" || marker === "ص") {
+    if (hour === 12) hour = 0;
+  } else if (marker === "pm" || marker === "م") {
+    if (hour < 12) hour += 12;
+  } else if (hour < 12) {
+    hour += 12; // بدون علامة: مسائي
+  }
+
+  return `${pad(hour)}:${pad(minute)}:00`;
 }
 
 // =====================================================
