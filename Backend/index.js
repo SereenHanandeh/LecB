@@ -8,13 +8,12 @@ const http = require("http");
 
 const pool = require("./models/db");
 const initializeDatabase = require("./models/initDb");
+const supervisorInitialStatsRouter = require("./routes/supervisorInitialStats.js");
 
 const excelRoutes = require("./routes/excel.js");
 const planRouter = require("./routes/plan.js");
 const supervisorRouter = require("./routes/supervisor.js");
 const roomsRouter = require("./routes/room.js");
-
-
 
 const app = express();
 
@@ -35,16 +34,14 @@ app.use(cors());
 app.use(
   express.json({
     limit: "10mb",
-  })
+  }),
 );
 
 // =====================================================
 // Uploads Directory
 // =====================================================
 
-const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ||
-  path.join(__dirname, "uploads");
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, {
@@ -52,17 +49,13 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   });
 }
 
-app.use(
-  "/uploads",
-  express.static(UPLOAD_DIR)
-);
+app.use("/uploads", express.static(UPLOAD_DIR));
 
 // =====================================================
 // Exports Directory
 // =====================================================
 
-const EXPORTS_DIR =
-  path.join(__dirname, "exports");
+const EXPORTS_DIR = path.join(__dirname, "exports");
 
 if (!fs.existsSync(EXPORTS_DIR)) {
   fs.mkdirSync(EXPORTS_DIR, {
@@ -70,29 +63,19 @@ if (!fs.existsSync(EXPORTS_DIR)) {
   });
 }
 
-app.use(
-  "/exports",
-  express.static(EXPORTS_DIR)
-);
+app.use("/exports", express.static(EXPORTS_DIR));
 
 // =====================================================
 // Routes
 // =====================================================
 
-app.use(
-  "/excel",
-  excelRoutes
-);
+app.use("/excel", excelRoutes);
 
-app.use(
-  "/plan",
-  planRouter
-);
+app.use("/plan", planRouter);
 
-app.use(
-  "/supervisors",
-  supervisorRouter
-);
+app.use("/supervisor-initial-stats", supervisorInitialStatsRouter);
+
+app.use("/supervisors", supervisorRouter);
 
 // =====================================================
 // Health Check
@@ -101,8 +84,7 @@ app.use(
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message:
-      "Supervisor Distribution System API is running",
+    message: "Supervisor Distribution System API is running",
   });
 });
 
@@ -113,21 +95,13 @@ app.use("/rooms", roomsRouter);
 
 async function testDatabase() {
   try {
-    const result = await pool.query(
-      "SELECT NOW() AS now"
-    );
+    const result = await pool.query("SELECT NOW() AS now");
 
-    console.log(
-      "✅ PostgreSQL connected:",
-      result.rows[0].now
-    );
+    console.log("✅ PostgreSQL connected:", result.rows[0].now);
 
     return true;
   } catch (error) {
-    console.error(
-      "❌ PostgreSQL connection failed:",
-      error.message
-    );
+    console.error("❌ PostgreSQL connection failed:", error.message);
 
     return false;
   }
@@ -144,9 +118,7 @@ async function startServer() {
     const dbConnected = await testDatabase();
 
     if (!dbConnected) {
-      console.error(
-        "❌ Server stopped because database connection failed."
-      );
+      console.error("❌ Server stopped because database connection failed.");
 
       process.exit(1);
     }
@@ -159,24 +131,17 @@ async function startServer() {
 
     await initializeDatabase();
 
-    console.log(
-      "✅ Database initialization completed"
-    );
+    console.log("✅ Database initialization completed");
 
     // =================================================
     // Start Server
     // =================================================
 
     server.listen(PORT, () => {
-      console.log(
-        `🚀 Server Listening At PORT ${PORT}`
-      );
+      console.log(`🚀 Server Listening At PORT ${PORT}`);
     });
-
   } catch (error) {
-    console.error(
-      "❌ Failed to start server:"
-    );
+    console.error("❌ Failed to start server:");
 
     console.error(error);
 
