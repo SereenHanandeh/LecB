@@ -8,12 +8,13 @@ const http = require("http");
 
 const pool = require("./models/db");
 const initializeDatabase = require("./models/initDb");
-const supervisorInitialStatsRouter = require("./routes/supervisorInitialStats.js");
 
 const excelRoutes = require("./routes/excel.js");
 const planRouter = require("./routes/plan.js");
 const supervisorRouter = require("./routes/supervisor.js");
 const roomsRouter = require("./routes/room.js");
+const supervisorInitialStatsRouter = require("./routes/supervisorInitialStats.js");
+
 
 const app = express();
 

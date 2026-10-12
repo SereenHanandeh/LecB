@@ -1284,7 +1284,6 @@ async function deletePlanSvc(planId) {
 // =====================================================
 // إحصائيات المشرفين في جميع الخطط المقبولة
 // =====================================================
-
 async function getAcceptedSupervisorStatsSvc() {
   const { rows } = await pool.query(`
     WITH per_plan AS (
@@ -1293,13 +1292,14 @@ async function getAcceptedSupervisorStatsSvc() {
         a.plan_id,
         p.date_from,
         p.date_to,
+        p.category,
         COUNT(DISTINCT (sg.date, sg.period_label)) AS periods,
         COUNT(a.id) AS assignments
       FROM assignments a
       JOIN plans p ON p.id = a.plan_id
       JOIN session_groups sg ON sg.id = a.session_group_id
       WHERE p.status = 'accepted'
-      GROUP BY a.supervisor_id, a.plan_id, p.date_from, p.date_to
+      GROUP BY a.supervisor_id, a.plan_id, p.date_from, p.date_to, p.category
     )
     SELECT
       s.id   AS supervisor_id,
@@ -1312,6 +1312,7 @@ async function getAcceptedSupervisorStatsSvc() {
           'plan_id',     pp.plan_id,
           'date_from',   pp.date_from,
           'date_to',     pp.date_to,
+          'category',    pp.category,
           'periods',     pp.periods,
           'assignments', pp.assignments
         )
@@ -1325,7 +1326,6 @@ async function getAcceptedSupervisorStatsSvc() {
 
   return rows;
 }
-
 
 // =====================================================
 // Delete Assignments (Bulk)
