@@ -5,7 +5,6 @@ const supervisorRouter = express.Router();
 supervisorRouter.get('/', C.list);
 supervisorRouter.post('/', C.create);
 supervisorRouter.patch('/:id', C.update);
-
-
+supervisorRouter.delete('/:id', C.remove);
 
 module.exports = supervisorRouter;

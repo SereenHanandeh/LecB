@@ -18,6 +18,7 @@ const {
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
+const pool = require("../models/db");
 
 const planService = require("../services/plan.js");
 
@@ -208,7 +209,7 @@ async function setDutyPool(req, res) {
       ),
     );
 
-    console.log("📌 normalized supervisor IDs:", uniqueIds);
+      console.log("📌 normalized supervisor IDs:", uniqueIds);
 
     if (!uniqueIds.length) {
       return res.status(400).json({
@@ -217,15 +218,32 @@ async function setDutyPool(req, res) {
       });
     }
 
-    await saveDutyPool(planId, uniqueIds);
+    // الإبقاء على المشرفين النشطين فقط
+    const activeResult = await pool.query(
+      "SELECT id FROM supervisors WHERE id = ANY($1::int[]) AND active = true",
+      [uniqueIds],
+    );
 
-    console.log("✅ Duty pool saved successfully");
+    const activeIds = activeResult.rows.map((row) => Number(row.id));
+    const skippedIds = uniqueIds.filter((id) => !activeIds.includes(id));
+
+    if (!activeIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: "لا يوجد مشرفون نشطون ضمن الاختيار. فعّلي المشرفين أولًا.",
+      });
+    }
+
+    await saveDutyPool(planId, activeIds);
+
+    console.log("✅ Duty pool saved successfully", { activeIds, skippedIds });
 
     return res.json({
       success: true,
       message: "Duty pool saved successfully",
       data: {
-        supervisorIds: uniqueIds,
+        supervisorIds: activeIds,
+        skippedInactive: skippedIds,
       },
     });
   } catch (err) {

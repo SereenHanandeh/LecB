@@ -54,13 +54,12 @@ async function saveDutyPool(planId, supervisorIds = []) {
       continue;
     }
 
-    await pool.query(
+      await pool.query(
       `
-      INSERT INTO duty_pool (
-        plan_window_id,
-        supervisor_id
-      )
-      VALUES ($1, $2)
+      INSERT INTO duty_pool (plan_window_id, supervisor_id)
+      SELECT $1, s.id
+      FROM supervisors s
+      WHERE s.id = $2 AND s.active = TRUE
       ON CONFLICT DO NOTHING
       `,
       [planId, sid],
@@ -82,6 +81,7 @@ async function getDutyPool(planId) {
     JOIN supervisors s
       ON s.id = dp.supervisor_id
     WHERE dp.plan_window_id = $1
+      AND s.active = TRUE
     ORDER BY s.id
     `,
     [planId],
@@ -89,7 +89,6 @@ async function getDutyPool(planId) {
 
   return result.rows;
 }
-
 // =====================================================
 // Preassignments
 // =====================================================
@@ -674,7 +673,8 @@ async function getPlanContext(planId) {
     FROM duty_pool dp
     JOIN supervisors s
       ON s.id = dp.supervisor_id
-    WHERE dp.plan_window_id = $1
+      WHERE dp.plan_window_id = $1
+      AND s.active = TRUE
     ORDER BY s.id
     `,
     [planId],

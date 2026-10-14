@@ -4470,6 +4470,12 @@ async function generatePlan(
 
   selectedSupervisorIds = Array.from(new Set(selectedSupervisorIds));
 
+    const activeSupervisorIds = new Set(supervisors.map((s) => Number(s.id)));
+
+  selectedSupervisorIds = selectedSupervisorIds.filter((id) =>
+    activeSupervisorIds.has(id),
+  );
+
   console.log(
     `👥 Selected supervisors: ${selectedSupervisorIds.length}`,
     selectedSupervisorIds,
