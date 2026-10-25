@@ -70,4 +70,6 @@ planRouter.post("/:planId/assignments/delete", Plan.deleteAssignments);
 
 planRouter.post("/:planId/assignments/move-to-plan", Plan.moveAssignmentsToPlan);
 
+router.patch("/:planId/session-group/:sessionGroupId", updateSessionGroup);
+
 module.exports = planRouter;

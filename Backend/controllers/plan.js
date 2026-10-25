@@ -15,6 +15,7 @@ const {
   saveRoomAssignments,
   deleteAssignmentsSvc,
   moveAssignmentsToPlanSvc,
+  updateSessionGroupSvc
 } = require("../services/plan.js");
 
 const { generatePlan } = require("../services/excel.js");
@@ -871,6 +872,87 @@ async function moveAssignmentsToPlan(req, res) {
   }
 }
 
+
+
+// =====================================================
+// Update Session Group Fields
+// =====================================================
+
+async function updateSessionGroup(req, res) {
+  try {
+    const { planId, sessionGroupId } = req.params;
+
+    const parsedSessionGroupId = Number(sessionGroupId);
+
+    if (!planId || !Number.isInteger(parsedSessionGroupId)) {
+      return res.status(400).json({
+        success: false,
+        error: "planId and a valid sessionGroupId are required",
+      });
+    }
+
+    const allowed = [
+      "crn",
+      "course_name",
+      "professor_name",
+      "phone",
+      "date",
+      "period_label",
+      "time_from",
+      "time_to",
+    ];
+
+    const fields = {};
+
+    allowed.forEach((key) => {
+      if (req.body && req.body[key] !== undefined) {
+        fields[key] = String(req.body[key]).trim();
+      }
+    });
+
+    if (!Object.keys(fields).length) {
+      return res.status(400).json({
+        success: false,
+        error: "No valid fields to update",
+      });
+    }
+
+    // التحقق من الحقول الإلزامية
+    for (const key of ["crn", "date", "period_label"]) {
+      if (key in fields && !fields[key]) {
+        return res.status(400).json({
+          success: false,
+          error: `${key} cannot be empty`,
+        });
+      }
+    }
+
+    if ("date" in fields && Number.isNaN(new Date(fields.date).getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid date",
+      });
+    }
+
+    const updated = await updateSessionGroupSvc(
+      planId,
+      parsedSessionGroupId,
+      fields,
+    );
+
+    return res.json({
+      success: true,
+      message: "Session group updated successfully",
+      data: updated,
+    });
+  } catch (err) {
+    if (err.status === 400 || err.status === 404) {
+      return res.status(err.status).json({ success: false, error: err.message });
+    }
+
+    return handleError(res, err, "Error updating session group");
+  }
+}
 // =====================================================
 // Exports
 // =====================================================
@@ -892,5 +974,6 @@ module.exports = {
   deletePlan,
   getAcceptedSupervisorStats,
   deleteAssignments,
-  moveAssignmentsToPlan
+  moveAssignmentsToPlan,
+  updateSessionGroup
 };

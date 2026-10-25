@@ -1454,9 +1454,218 @@ async function moveAssignmentsToPlanSvc(fromPlanId, targetPlanId, sessionGroupId
   return { moved, skipped };
 }
 
+
+// =====================================================
+// Update Session Group fields (Edit all columns)
+// =====================================================
+
+// نفس منطق excel.js: الوقت بدون AM/PM يُعتبر مسائيًا
+function normalizeTime24(value) {
+  const str = String(value ?? "").trim();
+  if (!str) return "";
+
+  const match = str.match(
+    /^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp]\.?[Mm]\.?|ص|م)?$/,
+  );
+  if (!match) return null; // صيغة غير صالحة
+
+  let hour = Number(match[1]);
+  const marker = (match[3] || "").toLowerCase().replace(/\./g, "");
+
+  if (marker === "am" || marker === "ص") {
+    if (hour === 12) hour = 0;
+  } else if (marker === "pm" || marker === "م") {
+    if (hour < 12) hour += 12;
+  } else if (hour < 12) {
+    hour += 12;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${match[2]}:00`;
+}
+
+async function updateSessionGroupSvc(planId, sessionGroupId, fields = {}) {
+  const badRequest = (message, status = 400) => {
+    const err = new Error(message);
+    err.status = status;
+    return err;
+  };
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // 1) التأكد أن الجلسة تتبع ملف الخطة
+    const sgRes = await client.query(
+      `
+      SELECT sg.*, to_char(sg.date, 'YYYY-MM-DD') AS date_str, p.excel_batch_id AS plan_batch
+      FROM session_groups sg
+      JOIN plans p ON p.excel_batch_id = sg.excel_batch_id
+      WHERE p.id = $1 AND sg.id = $2
+      FOR UPDATE OF sg
+      `,
+      [planId, sessionGroupId],
+    );
+
+    if (!sgRes.rowCount) {
+      throw badRequest("Session group not found in this plan", 404);
+    }
+
+    const old = sgRes.rows[0];
+
+    // 2) أعمدة session_groups
+    const sets = [];
+    const values = [];
+    const add = (column, value) => {
+      values.push(value);
+      sets.push(`${column} = $${values.length}`);
+    };
+
+    if ("crn" in fields) add("crn", fields.crn);
+    if ("course_name" in fields) add("course_name", fields.course_name);
+    if ("period_label" in fields) add("period_label", fields.period_label);
+
+    if ("date" in fields) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fields.date)) {
+        throw badRequest("date must be YYYY-MM-DD");
+      }
+      add("date", fields.date);
+    }
+
+    for (const key of ["time_from", "time_to"]) {
+      if (key in fields) {
+        const normalized = normalizeTime24(fields[key]);
+        if (normalized === null) throw badRequest(`Invalid ${key}`);
+        add(key, normalized || null);
+      }
+    }
+
+    if (sets.length) {
+      values.push(sessionGroupId);
+      await client.query(
+        `UPDATE session_groups SET ${sets.join(", ")} WHERE id = $${values.length}`,
+        values,
+      );
+    }
+
+    // 3) بيانات الأستاذ (جدول professors: تؤثر على كل صفوفه وكل الخطط)
+    if ("professor_name" in fields || "phone" in fields) {
+      if (old.professor_id == null) {
+        throw badRequest("This session has no professor to update");
+      }
+
+      if ("professor_name" in fields) {
+        if (!fields.professor_name) throw badRequest("professor_name cannot be empty");
+
+        const dup = await client.query(
+          `
+          SELECT id FROM professors
+          WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND id <> $2
+          LIMIT 1
+          `,
+          [fields.professor_name, old.professor_id],
+        );
+
+        if (dup.rowCount) {
+          throw badRequest("يوجد أستاذ آخر بنفس هذا الاسم");
+        }
+
+        await client.query(`UPDATE professors SET name = $1 WHERE id = $2`, [
+          fields.professor_name,
+          old.professor_id,
+        ]);
+
+        // الاسم المخزّن في الجداول الأخرى
+        await client.query(`UPDATE affinities SET name = $1 WHERE professor_id = $2`, [
+          fields.professor_name,
+          old.professor_id,
+        ]);
+        await client.query(`UPDATE room_assignments SET name = $1 WHERE professor_id = $2`, [
+          fields.professor_name,
+          old.professor_id,
+        ]);
+      }
+
+      if ("phone" in fields) {
+        await client.query(`UPDATE professors SET phone = $1 WHERE id = $2`, [
+          fields.phone || null,
+          old.professor_id,
+        ]);
+      }
+    }
+
+    // 4) تغيير التاريخ/الفترة: ننقل قاعة الأستاذ معه
+    const dateChanged = "date" in fields && fields.date !== old.date_str;
+    const periodChanged =
+      "period_label" in fields && fields.period_label !== old.period_label;
+
+    if (old.professor_id != null && (dateChanged || periodChanged)) {
+      const newDate = "date" in fields ? fields.date : old.date_str;
+      const newPeriod = "period_label" in fields ? fields.period_label : old.period_label;
+
+      // إن بقي للأستاذ جلسة أخرى بنفس الفترة القديمة، تبقى القاعة هناك
+      const others = await client.query(
+        `
+        SELECT 1 FROM session_groups
+        WHERE excel_batch_id = $1 AND professor_id = $2 AND id <> $3
+          AND date = $4::date AND period_label = $5
+        LIMIT 1
+        `,
+        [old.excel_batch_id, old.professor_id, sessionGroupId, old.date_str, old.period_label],
+      );
+
+      if (!others.rowCount) {
+        await client.query(
+          `
+          UPDATE room_assignments ra
+          SET date = $4::date, period_label = $5
+          WHERE ra.plan_id = $1 AND ra.professor_id = $2
+            AND ra.date = $3::date AND ra.period_label = $6
+            AND NOT EXISTS (
+              SELECT 1 FROM room_assignments x
+              WHERE x.plan_id = ra.plan_id AND x.professor_id = ra.professor_id
+                AND x.date = $4::date AND x.period_label = $5
+            )
+          `,
+          [planId, old.professor_id, old.date_str, newDate, newPeriod, old.period_label],
+        );
+
+        // صف قديم بقي بسبب وجود قاعة أصلًا في الفترة الجديدة
+        await client.query(
+          `
+          DELETE FROM room_assignments
+          WHERE plan_id = $1 AND professor_id = $2
+            AND date = $3::date AND period_label = $4
+          `,
+          [planId, old.professor_id, old.date_str, old.period_label],
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+
+    const updated = await pool.query(`SELECT * FROM session_groups WHERE id = $1`, [
+      sessionGroupId,
+    ]);
+
+    return updated.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    if (error.code === "23505") {
+      error.status = 400;
+      error.message = "القيمة الجديدة تتعارض مع سجل موجود (قيمة مكررة).";
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createPlanRow,
-
+updateSessionGroupSvc,
   saveDutyPool,
   getDutyPool,
 
