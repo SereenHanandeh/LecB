@@ -1496,16 +1496,26 @@ async function updateSessionGroupSvc(planId, sessionGroupId, fields = {}) {
     await client.query("BEGIN");
 
     // 1) التأكد أن الجلسة تتبع ملف الخطة
-    const sgRes = await client.query(
-      `
-      SELECT sg.*, to_char(sg.date, 'YYYY-MM-DD') AS date_str, p.excel_batch_id AS plan_batch
-      FROM session_groups sg
-      JOIN plans p ON p.excel_batch_id = sg.excel_batch_id
-      WHERE p.id = $1 AND sg.id = $2
-      FOR UPDATE OF sg
-      `,
-      [planId, sessionGroupId],
-    );
+   // 1) التأكد أن الجلسة تتبع الخطة (عبر التوزيعات أو عبر ملف الإكسل)
+const sgRes = await client.query(
+  `
+  SELECT sg.*, to_char(sg.date, 'YYYY-MM-DD') AS date_str
+  FROM session_groups sg
+  WHERE sg.id = $2
+    AND (
+      EXISTS (
+        SELECT 1 FROM assignments a
+        WHERE a.plan_id = $1 AND a.session_group_id = sg.id
+      )
+      OR EXISTS (
+        SELECT 1 FROM plans p
+        WHERE p.id = $1 AND p.excel_batch_id = sg.excel_batch_id
+      )
+    )
+  FOR UPDATE OF sg
+  `,
+  [planId, sessionGroupId],
+);
 
     if (!sgRes.rowCount) {
       throw badRequest("Session group not found in this plan", 404);
