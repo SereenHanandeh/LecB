@@ -953,6 +953,31 @@ async function updateSessionGroup(req, res) {
     return handleError(res, err, "Error updating session group");
   }
 }
+
+async function getAssignmentsReport(req, res) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id AS plan_id,
+             p.status AS plan_status,
+             to_char(sg.date::date, 'YYYY-MM-DD') AS date,
+             sg.period_label,
+             sg.time_from,
+             sg.time_to,
+             s.id AS supervisor_id,
+             s.name AS supervisor_name
+      FROM assignments a
+      JOIN session_groups sg ON sg.id = a.session_group_id
+      JOIN plans p ON p.id = sg.plan_id
+      JOIN supervisors s ON s.id = a.supervisor_id
+      WHERE p.status = 'accepted'
+      ORDER BY sg.date::date, sg.time_from, s.name
+    `);
+
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    return handleError(res, err, "Error fetching assignments report");
+  }
+}
 // =====================================================
 // Exports
 // =====================================================
@@ -975,5 +1000,6 @@ module.exports = {
   getAcceptedSupervisorStats,
   deleteAssignments,
   moveAssignmentsToPlan,
-  updateSessionGroup
+  updateSessionGroup,
+  getAssignmentsReport
 };

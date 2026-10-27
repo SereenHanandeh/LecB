@@ -8,6 +8,7 @@ const planRouter = express.Router();
 planRouter.get("/", Plan.getPlans);
 
 planRouter.get("/accepted-supervisor-stats", Plan.getAcceptedSupervisorStats);
+planRouter.get("/assignments-report", Plan.getAssignmentsReport); 
 planRouter.post("/", Plan.createPlan);
 
 planRouter.post("/:planId/duty-pool", Plan.setDutyPool);
