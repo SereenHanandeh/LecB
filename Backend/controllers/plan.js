@@ -960,6 +960,7 @@ async function getAssignmentsReport(req, res) {
       SELECT
         a.plan_id,
         p.status AS plan_status,
+         p.category AS category,
         to_char(sg.date, 'YYYY-MM-DD') AS date,
         sg.period_label,
         sg.time_from,
